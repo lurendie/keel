@@ -1,0 +1,36 @@
+# Copy to config.toml and adjust paths/commands.
+# You can also set AUTO_DEPLOY_CONFIG to point to a different file.
+
+# Webhook settings
+webhook_bind = "0.0.0.0:8000"
+webhook_path = "/webhook"
+webhook_secret = "lurendie"
+
+[email]
+smtp_server = "smtp.gmail.com"
+smtp_port = 587
+smtp_username = "your@gmail.com"
+smtp_password = "your_app_password"
+from = "your@gmail.com"
+to = ["your@gmail.com"]
+subject_prefix = "[AutoDeploy]"
+
+[[projects]]
+name = "project-a"
+repo_path = "E:/path/to/project-a"
+branches = ["main", "release"]
+build_command = "cargo build --release"
+built_executable = "E:/path/to/project-a/target/release/project-a.exe"
+deploy_path = "E:/path/to/run/project-a.exe"
+stop_command = "taskkill /F /IM project-a.exe"
+start_command = "E:/path/to/run/project-a.exe"
+
+[[projects]]
+name = "project-b"
+repo_path = "E:/path/to/project-b"
+branches = ["main"]
+build_command = "cargo build --release"
+built_executable = "E:/path/to/project-b/target/release/project-b.exe"
+deploy_path = "E:/path/to/run/project-b.exe"
+stop_command = "taskkill /F /IM project-b.exe"
+start_command = "E:/path/to/run/project-b.exe"
