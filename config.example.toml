@@ -5,6 +5,7 @@
 webhook_bind = "0.0.0.0:8000"
 webhook_path = "/webhook"
 webhook_secret = "lurendie"
+git_path = "/usr/bin/git"
 
 [email]
 smtp_server = "smtp.gmail.com"
@@ -16,21 +17,32 @@ to = ["your@gmail.com"]
 subject_prefix = "[AutoDeploy]"
 
 [[projects]]
-name = "project-a"
+name = "auth"
 repo_path = "E:/path/to/project-a"
 branches = ["main", "release"]
-build_command = "cargo build --release"
-built_executable = "E:/path/to/project-a/target/release/project-a.exe"
-deploy_path = "E:/path/to/run/project-a.exe"
-stop_command = "taskkill /F /IM project-a.exe"
-start_command = "E:/path/to/run/project-a.exe"
+  [[projects.steps]]
+  name = "auth-api"
+  workdir = "frontend"
+  build_command = "npm run build"
+  built_path = "frontend/dist"
+  deploy_path = "E:/path/to/run/frontend"
+  [[projects.steps]]
+  name = "auth-view"
+  workdir = "backend"
+  build_command = "cargo build --release"
+  built_path = "backend/target/release/project-a.exe"
+  deploy_path = "E:/path/to/run/project-a.exe"
+  stop_command = "taskkill /F /IM project-a.exe"
+  start_command = "E:/path/to/run/project-a.exe"
 
 [[projects]]
 name = "project-b"
 repo_path = "E:/path/to/project-b"
 branches = ["main"]
-build_command = "cargo build --release"
-built_executable = "E:/path/to/project-b/target/release/project-b.exe"
-deploy_path = "E:/path/to/run/project-b.exe"
-stop_command = "taskkill /F /IM project-b.exe"
-start_command = "E:/path/to/run/project-b.exe"
+  [[projects.steps]]
+  name = "build"
+  build_command = "cargo build --release"
+  built_path = "target/release/project-b.exe"
+  deploy_path = "E:/path/to/run/project-b.exe"
+  stop_command = "taskkill /F /IM project-b.exe"
+  start_command = "E:/path/to/run/project-b.exe"

@@ -16,8 +16,8 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, SystemTime},
 };
 use subtle::ConstantTimeEq;
 use tokio::task;
@@ -29,18 +29,26 @@ struct Config {
     webhook_secret: Option<String>,
     email: Option<EmailConfig>,
     projects: Vec<ProjectConfig>,
+    git_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct ProjectConfig {
     name: Option<String>,
     repo_path: PathBuf,
+    branches: Option<Vec<String>>,
+    steps: Vec<DeployStep>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeployStep {
+    name: Option<String>,
+    workdir: Option<PathBuf>,
     build_command: String,
-    built_executable: PathBuf,
+    built_path: PathBuf,
     deploy_path: PathBuf,
     stop_command: Option<String>,
     start_command: Option<String>,
-    branches: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -112,11 +120,15 @@ fn load_config(path: &str) -> Result<Config> {
     Ok(cfg)
 }
 
-fn check_and_deploy_project(project: &ProjectConfig, branch: &str) -> Result<bool> {
-    git_fetch(&project.repo_path, branch)?;
+fn check_and_deploy_project(
+    config: &Config,
+    project: &ProjectConfig,
+    branch: &str,
+) -> Result<bool> {
+    git_fetch(&project.repo_path, branch, config)?;
 
-    let local = git_rev(&project.repo_path, "HEAD")?;
-    let remote = git_rev(&project.repo_path, &format!("origin/{}", branch))?;
+    let local = git_rev(&project.repo_path, "HEAD", config)?;
+    let remote = git_rev(&project.repo_path, &format!("origin/{}", branch), config)?;
 
     if local == remote {
         log("No updates found.");
@@ -124,26 +136,41 @@ fn check_and_deploy_project(project: &ProjectConfig, branch: &str) -> Result<boo
     }
 
     log(&format!("Update detected. {} -> {}", local, remote));
-    git_pull(&project.repo_path, branch)?;
-    run_shell(&project.build_command, Some(&project.repo_path))?;
-
-    deploy_executable(&project.built_executable, &project.deploy_path)?;
-
-    if let Some(cmd) = &project.stop_command {
-        log("Stopping application...");
-        run_shell(cmd, None)?;
+    git_pull(&project.repo_path, branch, config)?;
+    if project.steps.is_empty() {
+        bail!("Project {} has no steps configured", project_label(project));
     }
-    if let Some(cmd) = &project.start_command {
-        log("Starting application...");
-        run_shell(cmd, None)?;
+
+    for step in &project.steps {
+        let workdir = resolve_path(&project.repo_path, step.workdir.as_ref());
+        log(&format!(
+            "Running step {} in {}",
+            step_label(step),
+            workdir.display()
+        ));
+        run_shell(&step.build_command, Some(&workdir))?;
+
+        if let Some(cmd) = &step.stop_command {
+            log("Stopping application...");
+            run_shell(cmd, None)?;
+        }
+
+        let built_path = resolve_path(&project.repo_path, Some(&step.built_path));
+        let deploy_path = resolve_path(&project.repo_path, Some(&step.deploy_path));
+        deploy_executable(&built_path, &deploy_path)?;
+
+        if let Some(cmd) = &step.start_command {
+            log("Starting application...");
+            run_shell(cmd, None)?;
+        }
     }
 
     Ok(true)
 }
 
-fn git_fetch(repo: &Path, branch: &str) -> Result<()> {
+fn git_fetch(repo: &Path, branch: &str, config: &Config) -> Result<()> {
     run_cmd(
-        Command::new("git")
+        Command::new(git_program(config))
             .arg("-C")
             .arg(repo)
             .arg("fetch")
@@ -153,9 +180,9 @@ fn git_fetch(repo: &Path, branch: &str) -> Result<()> {
     .context("git fetch failed")
 }
 
-fn git_pull(repo: &Path, branch: &str) -> Result<()> {
+fn git_pull(repo: &Path, branch: &str, config: &Config) -> Result<()> {
     run_cmd(
-        Command::new("git")
+        Command::new(git_program(config))
             .arg("-C")
             .arg(repo)
             .arg("pull")
@@ -166,8 +193,8 @@ fn git_pull(repo: &Path, branch: &str) -> Result<()> {
     .context("git pull failed")
 }
 
-fn git_rev(repo: &Path, rev: &str) -> Result<String> {
-    let output = Command::new("git")
+fn git_rev(repo: &Path, rev: &str, config: &Config) -> Result<String> {
+    let output = Command::new(git_program(config))
         .arg("-C")
         .arg(repo)
         .arg("rev-parse")
@@ -187,18 +214,73 @@ fn git_rev(repo: &Path, rev: &str) -> Result<String> {
 }
 
 fn deploy_executable(src: &Path, dst: &Path) -> Result<()> {
-    if let Some(parent) = dst.parent() {
+    let src_meta =
+        fs::metadata(src).with_context(|| format!("Source path not found: {}", src.display()))?;
+
+    if src_meta.is_dir() {
+        if dst.exists() && !dst.is_dir() {
+            bail!(
+                "Deploy path must be a directory when source is a directory: {}",
+                dst.display()
+            );
+        }
+        if dst.exists() {
+            fs::remove_dir_all(dst)
+                .with_context(|| format!("Failed to remove deploy directory: {}", dst.display()))?;
+        }
+        fs::create_dir_all(dst)
+            .with_context(|| format!("Failed to create deploy directory: {}", dst.display()))?;
+        copy_dir_all(src, dst)?;
+        log(&format!(
+            "Deployed directory from {} to {}",
+            src.display(),
+            dst.display()
+        ));
+        return Ok(());
+    }
+
+    let dst_str = dst.to_string_lossy();
+    let treat_as_dir = dst.exists() && dst.is_dir() || dst_str.ends_with(std::path::MAIN_SEPARATOR);
+    let final_dst = if treat_as_dir {
+        let file_name = src
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("Source file has no file name: {}", src.display()))?;
+        dst.join(file_name)
+    } else {
+        dst.to_path_buf()
+    };
+
+    if let Some(parent) = final_dst.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create deploy directory: {}", parent.display()))?;
     }
-    fs::copy(src, dst).with_context(|| {
+    fs::copy(src, &final_dst).with_context(|| {
         format!(
             "Failed to copy executable from {} to {}",
             src.display(),
-            dst.display()
+            final_dst.display()
         )
     })?;
-    log(&format!("Deployed executable to {}", dst.display()));
+    log(&format!("Deployed executable to {}", final_dst.display()));
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    for entry in fs::read_dir(src).with_context(|| format!("Read dir failed: {}", src.display()))? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            fs::create_dir_all(&to)
+                .with_context(|| format!("Create dir failed: {}", to.display()))?;
+            copy_dir_all(&from, &to)?;
+        } else {
+            fs::copy(&from, &to).with_context(|| {
+                format!("Copy failed from {} to {}", from.display(), to.display())
+            })?;
+        }
+    }
     Ok(())
 }
 
@@ -242,12 +324,74 @@ fn format_command(cmd: &Command) -> String {
     text
 }
 
+fn git_program(config: &Config) -> PathBuf {
+    match &config.git_path {
+        Some(path) => path.clone(),
+        None => PathBuf::from("git"),
+    }
+}
+
 fn log(message: &str) {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    println!("[{}] {}", ts, message);
+    let now = chrono::Local::now();
+    let ts = now.format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{}] {}", ts, message);
+    println!("{}", line);
+    write_log_line(&now, &line);
+}
+
+fn write_log_line(now: &chrono::DateTime<chrono::Local>, line: &str) {
+    let log_dir = log_dir();
+    let _ = fs::create_dir_all(&log_dir);
+
+    cleanup_old_logs_if_needed(&log_dir, now.date_naive());
+
+    let file_name = format!("auto_deploy-{}.log", now.format("%Y-%m-%d"));
+    let log_path = log_dir.join(file_name);
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{}", line);
+    }
+}
+
+fn log_dir() -> PathBuf {
+    if let Ok(dir) = env::var("AUTO_DEPLOY_LOG_DIR") {
+        return PathBuf::from(dir);
+    }
+    PathBuf::from("logs")
+}
+
+fn cleanup_old_logs_if_needed(log_dir: &Path, today: chrono::NaiveDate) {
+    static LAST_CLEANUP: OnceLock<Mutex<Option<chrono::NaiveDate>>> = OnceLock::new();
+    let guard = LAST_CLEANUP.get_or_init(|| Mutex::new(None));
+    let mut last = guard.lock().unwrap();
+    if last.map(|d| d >= today).unwrap_or(false) {
+        return;
+    }
+    *last = Some(today);
+
+    let cutoff = SystemTime::now()
+        .checked_sub(Duration::from_secs(60 * 60 * 24 * 7))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if let Ok(entries) = fs::read_dir(log_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("log") {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if modified < cutoff {
+                        let _ = fs::remove_file(path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn handle_webhook(
@@ -291,7 +435,7 @@ async fn handle_webhook(
             if !branch_allowed(&project.branches, &branch) {
                 continue;
             }
-            match check_and_deploy_project(project, &branch) {
+            match check_and_deploy_project(&state_clone.config, project, &branch) {
                 Ok(updated) => {
                     if updated {
                         any_updated = true;
@@ -371,6 +515,21 @@ fn project_label(project: &ProjectConfig) -> String {
     match &project.name {
         Some(name) if !name.is_empty() => name.clone(),
         _ => project.repo_path.display().to_string(),
+    }
+}
+
+fn step_label(step: &DeployStep) -> String {
+    match &step.name {
+        Some(name) if !name.is_empty() => name.clone(),
+        _ => "step".to_string(),
+    }
+}
+
+fn resolve_path(base: &Path, path: Option<&PathBuf>) -> PathBuf {
+    match path {
+        None => base.to_path_buf(),
+        Some(p) if p.is_absolute() => p.clone(),
+        Some(p) => base.join(p),
     }
 }
 
