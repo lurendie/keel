@@ -1,0 +1,4 @@
+web/src/**/*.vue
+web/dist
+web/node_modules
+web/.npm-cache

@@ -1,2 +1,15 @@
-/target
-config.toml
+/server/target
+/server/config.toml
+/server/auto_deploy.db
+/server/auto_deploy.db-shm
+/server/auto_deploy.db-wal
+/server/logs
+/npm-cache
+/web/.npm-cache
+/web/dist
+/web/node_modules
+/web/src/*.js
+/web/tsconfig.tsbuildinfo
+/web/npm-cache
+/web/auto-imports.d.ts
+/web/components.d.ts

@@ -1,0 +1,178 @@
+:root {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #262626;
+    background: #ffffff;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+
+    --ink: #171717;
+    --ink-2: #262626;
+    --ink-3: #525252;
+    --muted: #737373;
+    --paper: #ffffff;
+    --paper-soft: #f7f7f7;
+    --line: #e5e5e5;
+    --line-soft: #efefef;
+    --focus: #737373;
+    --success: #35688f;
+    --warning: #9a6b20;
+    --danger: #a94d42;
+
+    --el-color-primary: #171717;
+    --el-color-primary-light-3: #404040;
+    --el-color-primary-light-5: #737373;
+    --el-color-primary-light-7: #a3a3a3;
+    --el-color-primary-light-8: #d4d4d4;
+    --el-color-primary-light-9: #f0f0f0;
+    --el-color-primary-dark-2: #000000;
+    --el-color-success: var(--success);
+    --el-color-warning: var(--warning);
+    --el-color-danger: var(--danger);
+    --el-color-error: var(--danger);
+    --el-text-color-primary: var(--ink-2);
+    --el-text-color-regular: var(--ink-3);
+    --el-text-color-secondary: var(--muted);
+    --el-border-color: var(--line);
+    --el-border-color-light: var(--line-soft);
+    --el-border-color-lighter: var(--line-soft);
+    --el-fill-color-blank: var(--paper);
+    --el-fill-color-light: var(--paper-soft);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+    min-width: 320px;
+    min-height: 100%;
+    margin: 0;
+}
+
+body {
+    min-height: 100vh;
+    background: #ffffff;
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+::selection {
+    color: var(--ink);
+    background: #e5e5e5;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #d4d4d4;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a3a3a3;
+}
+
+.el-button {
+    border-radius: 3px;
+}
+
+.el-button--primary {
+    --el-button-bg-color: #171717;
+    --el-button-border-color: #171717;
+    --el-button-text-color: #ffffff;
+    --el-button-hover-bg-color: #333333;
+    --el-button-hover-border-color: #333333;
+    --el-button-hover-text-color: #ffffff;
+    --el-button-active-bg-color: #000000;
+    --el-button-active-border-color: #000000;
+    --el-button-active-text-color: #ffffff;
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-input-number {
+    border-radius: 3px;
+}
+
+.el-input__wrapper {
+    background: #ffffff;
+    box-shadow: 0 0 0 1px #e2e2e2 inset;
+}
+
+.el-input__wrapper.is-focus {
+    box-shadow: 0 0 0 1px #737373 inset;
+}
+
+.el-dialog,
+.el-drawer {
+    --el-dialog-bg-color: #ffffff;
+}
+
+.el-dialog {
+    border-radius: 5px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.12);
+}
+
+.el-dialog__header {
+    margin-right: 0;
+    padding: 22px 24px 16px;
+    border-bottom: 1px solid #efefef;
+}
+
+.el-dialog__title,
+.el-drawer__title {
+    color: #171717;
+    font-family: Georgia, "Songti SC", serif;
+    font-size: 21px;
+    font-weight: 500;
+}
+
+.el-dialog__body {
+    padding: 22px 24px;
+}
+
+.el-dialog__footer {
+    padding: 14px 24px 20px;
+    border-top: 1px solid #efefef;
+}
+
+.el-drawer__header {
+    margin-bottom: 0;
+    padding: 22px 24px 17px;
+    border-bottom: 1px solid #efefef;
+}
+
+@media (max-width: 720px) {
+    .el-dialog {
+        width: calc(100vw - 28px) !important;
+        margin: 14px auto;
+    }
+
+    .el-dialog__body {
+        padding: 18px;
+    }
+}
