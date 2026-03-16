@@ -1,2 +1,7 @@
-/target
-config.toml
+/server/target
+/server/config.toml
+/web/.npm-cache
+/web/dist
+/web/node_modules
+/web/src/*.js
+/web/tsconfig.tsbuildinfo

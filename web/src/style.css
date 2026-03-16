@@ -1,0 +1,152 @@
+:root {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #1f2937;
+    background: #f5f7fb;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+}
+
+.page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+h1 {
+    margin: 0;
+}
+
+.subtitle {
+    color: #6b7280;
+    margin: 8px 0 16px;
+}
+
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.layout {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 14px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 8px;
+    align-items: center;
+}
+
+.actions {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+}
+
+label {
+    font-size: 14px;
+    color: #374151;
+}
+
+.inline {
+    margin-top: 8px;
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+}
+
+input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+}
+
+button {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid #1d4ed8;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+}
+
+button.ghost {
+    border-color: #d1d5db;
+    background: #fff;
+    color: #111827;
+}
+
+button.small {
+    padding: 6px 10px;
+    margin-right: 6px;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+}
+
+th,
+td {
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px;
+    text-align: left;
+    font-size: 13px;
+    vertical-align: top;
+}
+
+.hint {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+.log-box {
+    margin-top: 12px;
+}
+
+.log-box pre {
+    max-height: 320px;
+    overflow: auto;
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+.error {
+    margin-top: 12px;
+    color: #b91c1c;
+}
+
+@media (max-width: 640px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
