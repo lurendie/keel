@@ -1,0 +1,48 @@
+# Copy to config.toml and adjust paths/commands.
+# You can also set AUTO_DEPLOY_CONFIG to point to a different file.
+
+# Webhook settings
+webhook_bind = "0.0.0.0:8000"
+webhook_path = "/webhook"
+webhook_secret = "lurendie"
+git_path = "/usr/bin/git"
+
+[email]
+smtp_server = "smtp.gmail.com"
+smtp_port = 587
+smtp_username = "your@gmail.com"
+smtp_password = "your_app_password"
+from = "your@gmail.com"
+to = ["your@gmail.com"]
+subject_prefix = "[AutoDeploy]"
+
+[[projects]]
+name = "auth"
+repo_path = "E:/path/to/project-a"
+branches = ["main", "release"]
+  [[projects.steps]]
+  name = "auth-api"
+  workdir = "frontend"
+  build_command = "npm run build"
+  built_path = "frontend/dist"
+  deploy_path = "E:/path/to/run/frontend"
+  [[projects.steps]]
+  name = "auth-view"
+  workdir = "backend"
+  build_command = "cargo build --release"
+  built_path = "backend/target/release/project-a.exe"
+  deploy_path = "E:/path/to/run/project-a.exe"
+  stop_command = "taskkill /F /IM project-a.exe"
+  start_command = "E:/path/to/run/project-a.exe"
+
+[[projects]]
+name = "project-b"
+repo_path = "E:/path/to/project-b"
+branches = ["main"]
+  [[projects.steps]]
+  name = "build"
+  build_command = "cargo build --release"
+  built_path = "target/release/project-b.exe"
+  deploy_path = "E:/path/to/run/project-b.exe"
+  stop_command = "taskkill /F /IM project-b.exe"
+  start_command = "E:/path/to/run/project-b.exe"
