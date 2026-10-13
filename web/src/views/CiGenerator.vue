@@ -652,7 +652,7 @@ onMounted(loadProjects);
 <style scoped>
 .ci-generator-page {
     min-height: 100%;
-    background: #ffffff;
+    background: var(--sf);
 }
 
 .generator-content {
@@ -668,8 +668,8 @@ onMounted(loadProjects);
 
 .generator-panel {
     min-width: 0;
-    background: #ffffff;
-    border: 1px solid #e5e5e5;
+    background: var(--sf);
+    border: 1px solid var(--bd);
 }
 
 .generator-panel:first-child {
@@ -688,8 +688,8 @@ onMounted(loadProjects);
     width: 38px;
     height: 38px;
     place-items: center;
-    color: #262626;
-    background: #f0f0f0;
+    color: var(--tx);
+    background: var(--sf2);
 }
 
 .panel-icon :deep(svg) {
@@ -699,7 +699,7 @@ onMounted(loadProjects);
 
 .panel-heading span,
 .preview-toolbar span {
-    color: #8a8a8a;
+    color: var(--tx3);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.12em;
@@ -708,7 +708,7 @@ onMounted(loadProjects);
 
 .panel-heading h2 {
     margin: 5px 0 0;
-    color: #171717;
+    color: var(--tx);
     font-size: 18px;
     font-weight: 650;
 }
@@ -721,14 +721,14 @@ onMounted(loadProjects);
     height: auto;
     margin-bottom: 6px;
     padding: 0;
-    color: #595959;
+    color: var(--tx2);
     font-size: 12px;
     line-height: 1.3;
 }
 
 .form-section {
     padding-bottom: 22px;
-    border-bottom: 1px solid #ededed;
+    border-bottom: 1px solid var(--bd);
 }
 
 .form-section + .form-section {
@@ -742,7 +742,7 @@ onMounted(loadProjects);
 
 .section-title {
     margin-bottom: 14px;
-    color: #262626;
+    color: var(--tx);
     font-size: 13px;
     font-weight: 700;
 }
@@ -767,17 +767,17 @@ onMounted(loadProjects);
     gap: 14px;
     margin-top: 2px;
     padding: 10px 12px;
-    background: #f7f7f7;
+    background: var(--sf2);
     font-size: 11px;
 }
 
 .repository-note span {
-    color: #737373;
+    color: var(--tx3);
 }
 
 .repository-note code {
     overflow: hidden;
-    color: #262626;
+    color: var(--tx);
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -795,7 +795,7 @@ onMounted(loadProjects);
     justify-content: space-between;
     gap: 18px;
     padding: 12px 0;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--sf2);
 }
 
 .switch-row:last-child {
@@ -809,13 +809,13 @@ onMounted(loadProjects);
 }
 
 .switch-row strong {
-    color: #262626;
+    color: var(--tx);
     font-size: 12px;
 }
 
 .switch-row span {
     margin-top: 4px;
-    color: #8a8a8a;
+    color: var(--tx3);
     font-size: 11px;
 }
 
@@ -826,17 +826,17 @@ onMounted(loadProjects);
     margin-top: 14px;
     padding: 10px 12px;
     flex-wrap: wrap;
-    background: #f7f7f7;
+    background: var(--sf2);
 }
 
 .github-config span {
     margin-right: auto;
-    color: #737373;
+    color: var(--tx3);
     font-size: 11px;
 }
 
 .github-config code {
-    color: #262626;
+    color: var(--tx);
     font-size: 10px;
 }
 
@@ -853,7 +853,7 @@ onMounted(loadProjects);
     justify-content: space-between;
     gap: 16px;
     padding: 14px 16px;
-    border-bottom: 1px solid #e5e5e5;
+    border-bottom: 1px solid var(--bd);
 }
 
 .preview-toolbar > div:first-child {
@@ -865,7 +865,7 @@ onMounted(loadProjects);
 .preview-toolbar strong {
     overflow: hidden;
     margin-top: 5px;
-    color: #262626;
+    color: var(--tx);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 12px;
     text-overflow: ellipsis;
@@ -884,8 +884,8 @@ onMounted(loadProjects);
     margin: 0;
     padding: 18px;
     overflow: auto;
-    color: #262626;
-    background: #f7f7f7;
+    color: var(--tx);
+    background: var(--sf2);
     font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
     font-size: 11px;
     line-height: 1.65;
@@ -894,14 +894,14 @@ onMounted(loadProjects);
 }
 
 .quiet-button {
-    color: #404040;
-    background: #f5f5f5;
-    border: 1px solid #e2e2e2;
+    color: var(--tx2);
+    background: var(--sf2);
+    border: 1px solid var(--bd2);
 }
 
 .quiet-button:hover {
-    color: #171717;
-    background: #ebebeb;
+    color: var(--tx);
+    background: var(--sf3);
 }
 
 @media (max-width: 1100px) {

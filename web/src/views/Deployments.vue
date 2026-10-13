@@ -1,50 +1,105 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import {
-  CircleCheck,
-  Clock,
-  Document,
-  Refresh,
-  Search,
-  Warning,
-} from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PageIntro from "../components/PageIntro.vue";
-import StatusPill from "../components/StatusPill.vue";
+import StatusChip from "../components/StatusChip.vue";
+import DeployRail from "../components/DeployRail.vue";
+import LogConsole from "../components/LogConsole.vue";
 import {
   getDeploymentDetail,
   listDeployments,
+  listProjects,
   type Deployment,
   type DeploymentDetail,
+  type DeployMode,
+  type Project,
 } from "../api/api";
+import {
+  displayStatus,
+  failedStageFromLog,
+  parseLog,
+  runningStageFromLog,
+  statusLabel,
+  versionFromMessage,
+} from "../constants/deploy";
 import { formatTime } from "../utils/format";
+import { useRoute, useRouter } from "vue-router";
+
+const route = useRoute();
+const router = useRouter();
 
 const deployments = ref<Deployment[]>([]);
+const projects = ref<Project[]>([]);
 const selected = ref<DeploymentDetail | null>(null);
+const selectedId = ref<number | null>(null);
 const loading = ref(true);
 const detailLoading = ref(false);
-const detailVisible = ref(false);
 const searchText = ref("");
+const statusFilter = ref<"all" | "failed" | "running" | "queued">("all");
 let refreshTimer: number | undefined;
 
-const filteredDeployments = computed(() => {
+const filtered = computed(() => {
   const keyword = searchText.value.trim().toLowerCase();
-  if (!keyword) {
-    return deployments.value;
-  }
-
-  return deployments.value.filter((deployment) =>
-    [deployment.project_name, deployment.branch, deployment.status, deployment.message || ""]
+  return deployments.value.filter((d) => {
+    if (statusFilter.value !== "all" && d.status !== statusFilter.value) {
+      return false;
+    }
+    if (!keyword) {
+      return true;
+    }
+    return [d.project_name, d.branch, d.status, d.message || ""]
       .join(" ")
       .toLowerCase()
-      .includes(keyword),
-  );
+      .includes(keyword);
+  });
 });
 
-const loadDeployments = async (showMessage = false) => {
+const counts = computed(() => ({
+  all: deployments.value.length,
+  failed: deployments.value.filter((d) => d.status === "failed").length,
+  running: deployments.value.filter((d) => d.status === "running").length,
+  queued: deployments.value.filter((d) => d.status === "queued").length,
+}));
+
+/** 部署方式决定阶段序列，需要从项目里查。 */
+function modeFor(deployment: Deployment): DeployMode {
+  return projects.value.find((p) => p.id === deployment.project_id)?.deploy_mode ?? "ci_ssh";
+}
+
+const detailLines = computed(() => parseLog(selected.value?.log_text));
+
+/**
+ * 失败停在哪个阶段：后端不记录阶段边界，只能从日志里的命令条数推断。
+ * 推断不出来时返回 null，轨道保持 idle 而不是编造进度。
+ */
+const failedStage = computed(() =>
+  selected.value?.status === "failed" ? failedStageFromLog(detailLines.value) : null,
+);
+
+const nowStage = computed(() =>
+  selected.value?.status === "running" ? runningStageFromLog(detailLines.value) : null,
+);
+
+const errorDetail = computed(() => {
+  if (selected.value?.status !== "failed") {
+    return null;
+  }
+  const errors = detailLines.value.filter((l) => l.kind === "err");
+  if (errors.length > 0) {
+    return errors.map((l) => l.text).join("\n");
+  }
+  return selected.value.message;
+});
+
+async function load(showMessage = false) {
   loading.value = true;
   try {
-    deployments.value = await listDeployments(100);
+    const [deploymentList, projectList] = await Promise.all([
+      listDeployments(100),
+      listProjects(),
+    ]);
+    deployments.value = deploymentList;
+    projects.value = projectList;
     if (showMessage) {
       ElMessage.success("部署记录已刷新");
     }
@@ -53,56 +108,38 @@ const loadDeployments = async (showMessage = false) => {
   } finally {
     loading.value = false;
   }
-};
+}
 
-const openDetail = async (deployment: Deployment) => {
+async function openDetail(deployment: Deployment) {
+  selectedId.value = deployment.id;
   selected.value = null;
-  detailVisible.value = true;
   detailLoading.value = true;
+  // 深链接：刷新或分享后仍停在同一条记录
+  void router.replace({ query: { ...route.query, d: String(deployment.id) } });
 
   try {
     selected.value = await getDeploymentDetail(deployment.id);
   } catch (error) {
-    detailVisible.value = false;
     ElMessage.error(error instanceof Error ? error.message : "部署详情加载失败");
   } finally {
     detailLoading.value = false;
   }
-};
-
-const statusLabel = (status: string) => {
-  if (status === "success") return "成功";
-  if (status === "failed") return "失败";
-  if (status === "running") return "执行中";
-  if (status === "queued") return "排队中";
-  return status;
-};
-
-const statusIcon = (status: string) => {
-  if (status === "success") return CircleCheck;
-  if (status === "failed") return Warning;
-  return Clock;
-};
-
-const copyLog = async () => {
-  if (!selected.value?.log_text) {
-    ElMessage.info("当前没有可复制的日志");
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(selected.value.log_text);
-    ElMessage.success("日志已复制");
-  } catch {
-    ElMessage.error("复制失败，请手动选择日志");
-  }
-};
+}
 
 onMounted(async () => {
-  await loadDeployments();
+  await load();
+  // 支持 #/deployments?d=142 直接打开某条记录
+  const wanted = Number(route.query.d);
+  const target = Number.isFinite(wanted)
+    ? deployments.value.find((d) => d.id === wanted)
+    : deployments.value[0];
+  if (target) {
+    await openDetail(target);
+  }
+
   refreshTimer = window.setInterval(() => {
-    if (!detailVisible.value) {
-      loadDeployments();
+    if (document.visibilityState === "visible") {
+      void load();
     }
   }, 12000);
 });
@@ -115,444 +152,285 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div class="deployments-page">
+    <div>
         <PageIntro
             eyebrow="Workspace / Deployments"
             title="部署记录"
-            description="每一次发布都有完整的状态、时间和执行日志。正在运行的任务会自动刷新。"
+            description="每条记录都有完整状态与执行日志。运行中的任务会定时刷新。"
         >
             <template #actions>
-                <el-button class="quiet-button" :loading="loading" @click="loadDeployments(true)">
-                    <el-icon><Refresh /></el-icon>
-                    刷新记录
-                </el-button>
+                <el-button :loading="loading" @click="load(true)">刷新记录</el-button>
             </template>
         </PageIntro>
 
-        <section class="deployments-content">
-            <div class="deployments-toolbar">
-                <div class="toolbar-copy">
-                    <strong>{{ filteredDeployments.length }}</strong>
-                    <span>条最近记录</span>
-                    <span class="live-indicator"><i></i> 自动刷新</span>
-                </div>
+        <section class="content">
+            <div class="filters">
+                <el-radio-group v-model="statusFilter" size="small">
+                    <el-radio-button value="all">全部 {{ counts.all }}</el-radio-button>
+                    <el-radio-button value="failed">失败 {{ counts.failed }}</el-radio-button>
+                    <el-radio-button value="running">执行中 {{ counts.running }}</el-radio-button>
+                    <el-radio-button value="queued">排队 {{ counts.queued }}</el-radio-button>
+                </el-radio-group>
                 <el-input
                     v-model="searchText"
-                    class="search-input"
+                    class="search"
                     clearable
-                    placeholder="搜索项目、分支或状态"
-                >
-                    <template #prefix><el-icon><Search /></el-icon></template>
-                </el-input>
+                    placeholder="搜索项目、分支、版本"
+                />
             </div>
 
-            <div v-if="loading" class="state-panel">正在读取部署记录...</div>
-            <div v-else-if="filteredDeployments.length === 0" class="empty-panel">
-                <div class="empty-symbol"><Document /></div>
-                <strong>{{ searchText ? "没有匹配的部署记录" : "还没有部署记录" }}</strong>
-                <p>{{ searchText ? "换一个关键词试试。" : "项目第一次发布后，状态和日志会保存在这里。" }}</p>
-            </div>
-            <div v-else class="deployment-list">
-                <button
-                    v-for="deployment in filteredDeployments"
-                    :key="deployment.id"
-                    class="deployment-row"
-                    type="button"
-                    @click="openDetail(deployment)"
-                >
-                    <span class="deployment-number">#{{ String(deployment.id).padStart(4, "0") }}</span>
-                    <span class="deployment-status-icon" :class="`status-${deployment.status}`">
-                        <component :is="statusIcon(deployment.status)" />
-                    </span>
-                    <span class="deployment-summary">
-                        <strong>{{ deployment.project_name }}</strong>
-                        <span>{{ deployment.message || "部署任务" }}</span>
-                    </span>
-                    <span class="deployment-branch">{{ deployment.branch }}</span>
-                    <StatusPill :status="deployment.status" :label="statusLabel(deployment.status)" />
-                    <time>{{ formatTime(deployment.started_at) }}</time>
-                </button>
+            <div class="split">
+                <div class="list">
+                    <div v-if="loading" class="state">正在读取部署记录...</div>
+                    <template v-else>
+                        <button
+                            v-for="item in filtered"
+                            :key="item.id"
+                            class="item"
+                            :class="{ 'is-active': item.id === selectedId }"
+                            type="button"
+                            @click="openDetail(item)"
+                        >
+                            <span class="item-id">#{{ String(item.id).padStart(4, "0") }}</span>
+                            <span class="item-p">{{ item.project_name }}</span>
+                            <StatusChip
+                                :status="displayStatus(item.status, item.message)"
+                                :label="statusLabel(displayStatus(item.status, item.message))"
+                            />
+                            <span class="item-s">
+                                {{ item.branch }}
+                                <template v-if="versionFromMessage(item.message)">
+                                    · {{ versionFromMessage(item.message) }}
+                                </template>
+                            </span>
+                        </button>
+                    </template>
+
+                    <div v-if="!loading && filtered.length === 0" class="state">
+                        {{ searchText ? "没有匹配的部署记录" : "还没有部署记录" }}
+                    </div>
+                </div>
+
+                <div class="detail-col">
+                    <div v-if="detailLoading" class="panel detail">
+                        <div class="state">正在读取完整日志...</div>
+                    </div>
+
+                    <div v-else-if="selected" class="panel detail">
+                        <div class="detail-h">
+                            <div>
+                                <span class="cap">
+                                    Deployment #{{ String(selected.id).padStart(4, "0") }}
+                                </span>
+                                <div class="detail-n">{{ selected.project_name }}</div>
+                            </div>
+                            <StatusChip
+                                :status="displayStatus(selected.status, selected.message)"
+                                :label="statusLabel(displayStatus(selected.status, selected.message))"
+                            />
+                        </div>
+
+                        <dl class="dmeta">
+                            <div>
+                                <dt>分支</dt>
+                                <dd>{{ selected.branch }}</dd>
+                            </div>
+                            <div>
+                                <dt>版本</dt>
+                                <dd>{{ versionFromMessage(selected.message) || "—" }}</dd>
+                            </div>
+                            <div>
+                                <dt>开始</dt>
+                                <dd>{{ formatTime(selected.started_at) }}</dd>
+                            </div>
+                            <div>
+                                <dt>结束</dt>
+                                <dd>{{ formatTime(selected.finished_at) }}</dd>
+                            </div>
+                        </dl>
+
+                        <div class="dsec">
+                            <div class="dsec-t">
+                                <span class="cap">Pipeline</span>
+                                <span class="cap">
+                                    {{ modeFor(selected) === "ci_ssh" ? "CI 制品 → SSH" : "本机构建" }}
+                                </span>
+                            </div>
+                            <DeployRail
+                                :status="selected.status"
+                                :mode="modeFor(selected)"
+                                :now-stage="nowStage"
+                                :failed-stage="failedStage"
+                                :halted="selected.status === 'queued' && !selected.log_text"
+                                :error-detail="errorDetail"
+                            />
+                        </div>
+
+                        <div class="dsec">
+                            <div v-if="selected.log_text" class="dsec-t">
+                                <span class="cap">Log</span>
+                                <span class="cap">
+                                    {{ detailLines.length }} 行
+                                </span>
+                            </div>
+                            <LogConsole
+                                v-if="selected.log_text"
+                                :log-text="selected.log_text"
+                            />
+                            <div v-else class="note">
+                                本次任务没有落库日志。
+                                <template v-if="selected.status === 'running'">
+                                    运行中的执行输出只在任务结束后写入数据库，上面的轨道反映的是真实进度。
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else class="panel detail">
+                        <div class="state">从左侧选择一条部署记录</div>
+                    </div>
+                </div>
             </div>
         </section>
-
-        <el-drawer v-model="detailVisible" title="部署详情" size="min(720px, 94vw)" class="detail-drawer">
-            <div v-if="detailLoading" class="drawer-state">正在读取完整日志...</div>
-            <div v-else-if="selected" class="deployment-detail">
-                <div class="detail-heading">
-                    <div>
-                        <span class="detail-eyebrow">Deployment #{{ String(selected.id).padStart(4, "0") }}</span>
-                        <h2>{{ selected.project_name }}</h2>
-                    </div>
-                    <StatusPill :status="selected.status" :label="statusLabel(selected.status)" />
-                </div>
-
-                <div class="detail-meta">
-                    <div><span>分支</span><strong>{{ selected.branch }}</strong></div>
-                    <div><span>开始时间</span><strong>{{ formatTime(selected.started_at) }}</strong></div>
-                    <div><span>结束时间</span><strong>{{ formatTime(selected.finished_at) }}</strong></div>
-                </div>
-
-                <div class="detail-message">
-                    <span>状态消息</span>
-                    <p>{{ selected.message || "没有额外消息" }}</p>
-                </div>
-
-                <div class="log-heading">
-                    <span>Execution log</span>
-                    <el-button text title="复制日志" @click="copyLog">
-                        复制
-                    </el-button>
-                </div>
-                <pre class="log-box">{{ selected.log_text || "暂无日志" }}</pre>
-            </div>
-        </el-drawer>
     </div>
 </template>
 
 <style scoped>
-.deployments-page {
-    min-height: 100%;
-}
+.content { padding: 20px 24px 44px; }
 
-.deployments-content {
-    padding: 28px 36px 44px;
-}
+.filters { display: flex; align-items: center; gap: 10px; }
+.search { width: 240px; margin-left: auto; }
 
-.deployments-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
-}
-
-.toolbar-copy {
-    display: flex;
-    align-items: baseline;
-    gap: 7px;
-    color: #88928a;
-    font-size: 12px;
-}
-
-.toolbar-copy strong {
-    color: #354139;
-    font-family: Georgia, serif;
-    font-size: 24px;
-    font-weight: 500;
-}
-
-.live-indicator {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: 10px;
-    color: #4b5563;
-    font-size: 11px;
-}
-
-.live-indicator i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #6b7280;
-}
-
-.quiet-button {
-    color: #3d4b42;
-    background: #f5f5f5;
-    border: 1px solid #e2e2e2;
-}
-
-.quiet-button:hover {
-    color: #202723;
-    background: #ebebeb;
-}
-
-.search-input {
-    width: min(300px, 48%);
-}
-
-.deployment-list,
-.empty-panel,
-.state-panel {
-    background: #ffffff;
-    border: 1px solid #d9ded9;
-}
-
-.deployment-row {
+.split {
     display: grid;
-    grid-template-columns: 72px 36px minmax(0, 1fr) 120px 84px 110px;
-    align-items: center;
+    grid-template-columns: 340px minmax(0, 1fr);
     gap: 12px;
+    margin-top: 12px;
+    align-items: start;
+}
+
+.detail-col { align-self: stretch; min-width: 0; }
+
+.list {
+    overflow: hidden;
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: var(--r-lg);
+}
+
+.item {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 3px 9px;
     width: 100%;
-    min-height: 75px;
-    padding: 0 16px;
+    padding: 9px 11px;
     color: inherit;
-    text-align: left;
     background: transparent;
     border: 0;
-    border-bottom: 1px solid #e1e5e1;
+    border-bottom: 1px solid var(--bd);
+    border-left: 2px solid transparent;
     cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    transition: background 120ms;
 }
 
-.deployment-row:last-child {
-    border-bottom: 0;
-}
-
-.deployment-row:hover {
-    background: #f5f5f5;
-}
-
-.deployment-number {
-    color: #9ba39c;
-    font-family: "Arial Narrow", "Segoe UI", sans-serif;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-}
-
-.deployment-status-icon {
-    display: grid;
-    width: 30px;
-    height: 30px;
-    place-items: center;
-    border-radius: 50%;
-}
-
-.deployment-status-icon :deep(svg) {
-    width: 16px;
-}
-
-.status-success {
-    color: #35688f;
-    background: #eaf2f8;
-}
-
-.status-failed {
-    color: #a94d42;
-    background: #f8e6e1;
-}
-
-.status-queued,
-.status-running {
-    color: #8a6d2f;
-    background: #f7efd5;
-}
-
-.deployment-summary {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-}
-
-.deployment-summary strong,
-.deployment-summary span {
+.item:last-child { border-bottom: 0; }
+.item:hover { background: var(--sf2); }
+.item.is-active { background: var(--tag-bg); border-left-color: var(--tag); }
+.item-id { color: var(--tx4); font-family: var(--font-mono); font-size: 11px; }
+.item-p {
     overflow: hidden;
+    font-size: 12.5px;
+    font-weight: 550;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.item-s {
+    grid-column: 2 / 4;
+    overflow: hidden;
+    color: var(--tx3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.deployment-summary strong {
-    color: #354139;
-    font-size: 13px;
-}
-
-.deployment-summary span,
-.deployment-branch,
-.deployment-row time {
-    margin-top: 4px;
-    color: #8a948c;
-    font-size: 11px;
-}
-
-.deployment-branch {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.deployment-row time {
-    margin-top: 0;
-    text-align: right;
-}
-
-.state-panel,
-.empty-panel {
+.state {
     display: flex;
-    min-height: 250px;
+    min-height: 120px;
     align-items: center;
     justify-content: center;
-    flex-direction: column;
-    gap: 10px;
-    color: #778279;
-    font-size: 13px;
+    padding: 16px;
+    color: var(--tx3);
+    font-size: 12.5px;
 }
 
-.empty-panel strong {
-    color: #354139;
-    font-size: 15px;
-}
-
-.empty-panel p {
-    margin: 0;
-    color: #929b94;
-    font-size: 12px;
-}
-
-.empty-symbol {
-    display: grid;
-    width: 42px;
-    height: 42px;
-    place-items: center;
-    color: #525252;
-    background: #f0f0f0;
-}
-
-.drawer-state {
-    display: grid;
-    min-height: 220px;
-    place-items: center;
-    color: #78837b;
-    font-size: 13px;
-}
-
-.detail-heading {
+.detail { position: sticky; top: 0; }
+.detail-h {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
-    padding-bottom: 22px;
-    border-bottom: 1px solid #e1e5e1;
-}
-
-.detail-eyebrow {
-    color: #879189;
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-}
-
-.detail-heading h2 {
-    margin: 9px 0 0;
-    color: #202723;
-    font-family: Georgia, serif;
-    font-size: 25px;
-    font-weight: 500;
-}
-
-.detail-meta {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
     gap: 14px;
-    padding: 20px 0;
-    border-bottom: 1px solid #e1e5e1;
+    padding: 13px 15px;
+    border-bottom: 1px solid var(--bd);
 }
+.detail-n { margin-top: 4px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
 
-.detail-meta div {
+.dmeta {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 11px 15px;
+    border-bottom: 1px solid var(--bd);
 }
-
-.detail-meta span,
-.detail-message > span,
-.log-heading span {
-    color: #879189;
+.dmeta > div { padding-right: 20px; }
+.dmeta > div + div { padding-left: 20px; border-left: 1px solid var(--bd); }
+.dmeta dt {
+    color: var(--tx4);
+    font-family: var(--font-mono);
     font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
 }
-
-.detail-meta strong {
-    color: #354139;
-    font-size: 12px;
-    font-weight: 650;
+.dmeta dd {
+    margin: 3px 0 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
 }
 
-.detail-message {
-    padding: 20px 0;
-}
-
-.detail-message p {
-    margin: 8px 0 0;
-    color: #566359;
-    font-size: 13px;
-    line-height: 1.55;
-}
-
-.log-heading {
+.dsec { border-bottom: 1px solid var(--bd); }
+.dsec:last-child { border-bottom: 0; }
+.dsec-t {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 8px;
+    gap: 12px;
+    padding: 11px 15px 0;
 }
 
-.log-box {
-    min-height: 230px;
-    max-height: 500px;
-    margin: 0;
-    padding: 16px;
-    overflow: auto;
-    color: #354139;
-    background: #ffffff;
-    border: 1px solid #dfe5e1;
-    font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
+.note {
+    margin: 12px 15px;
+    padding: 9px 11px;
+    color: var(--tx3);
+    background: var(--sf2);
+    border: 1px solid var(--bd);
+    border-radius: var(--r);
+    font-size: 12px;
     line-height: 1.6;
-    white-space: pre-wrap;
 }
 
-@media (max-width: 920px) {
-    .deployments-content {
-        padding: 24px;
-    }
-
-    .deployment-row {
-        grid-template-columns: 60px 36px minmax(0, 1fr) 84px 100px;
-    }
-
-    .deployment-branch {
-        display: none;
-    }
+@media (max-width: 1000px) {
+    .split { grid-template-columns: minmax(0, 1fr); }
+    .detail-col { align-self: auto; }
+    .detail { position: static; }
 }
 
-@media (max-width: 720px) {
-    .deployments-content {
-        padding: 20px 18px 32px;
-    }
-
-    .deployments-toolbar {
-        align-items: stretch;
-        gap: 14px;
-        flex-direction: column;
-    }
-
-    .search-input {
-        width: 100%;
-    }
-
-    .deployment-row {
-        grid-template-columns: 30px 36px minmax(0, 1fr) 82px;
-        gap: 8px;
-        min-height: 70px;
-        padding: 0 10px;
-    }
-
-    .deployment-number {
-        display: none;
-    }
-
-    .deployment-row time {
-        display: none;
-    }
-
-    .deployment-row .status-pill {
-        justify-self: end;
-    }
-
-    .detail-meta {
-        grid-template-columns: 1fr;
-    }
+@media (max-width: 760px) {
+    .content { padding: 14px 12px 34px; }
+    .filters { flex-wrap: wrap; }
+    .search { width: 100%; margin-left: 0; }
 }
 </style>

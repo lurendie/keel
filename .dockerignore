@@ -1,0 +1,14 @@
+# Docker 构建上下文忽略项。
+# 前端产物 web/dist 必须保留——镜像直接用它。
+**/node_modules
+**/target
+**/.git
+npm-cache
+**/npm-cache
+**/auto_deploy.db
+**/auto_deploy.db-shm
+**/auto_deploy.db-wal
+server/logs
+design
+*.md
+!README.MD

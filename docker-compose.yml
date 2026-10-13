@@ -1,0 +1,71 @@
+# Keel 部署编排。
+#
+# 与 1Panel 共存：不占用 80/443（openresty 在用），只发布 8000。
+# 所有敏感值从同目录的 .env 读取，不写进这个文件。
+services:
+  keel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: keel:latest
+    container_name: keel
+    restart: unless-stopped
+
+    # 直接对公网发布 8000：界面与 /webhook 都从这里进。
+    #
+    # 安全代价（已与使用者确认后接受）：
+    #   1. 无 TLS，登录口令与 JWT 明文过网；
+    #   2. Keel 会把部署目标的 SSH 密码明文存进 SQLite；
+    #   3. 任何能访问该端口的人都能尝试登录（有 5 次失败锁 IP 的限流）。
+    # 想收回内网时把这行改回 "127.0.0.1:8000:8000"，再走 1Panel 反代。
+    ports:
+      - "8000:8000"
+
+    environment:
+      # 首次启动用它初始化 admin 密码；库里已有密码后此项仅用于轮换旧默认密码
+      ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:?set KEEL_ADMIN_PASSWORD in .env}
+      JWT_SECRET: ${KEEL_JWT_SECRET:?set KEEL_JWT_SECRET in .env}
+      DEPLOY_MAX_CONCURRENCY: ${KEEL_MAX_CONCURRENCY:-4}
+      # 部署服务自己这台机器的 known_hosts，用于校验目标主机公钥
+      SSH_KNOWN_HOSTS: /root/.ssh/known_hosts
+      # 必须保持 false。端口直接暴露时若信任转发头，任何人伪造
+      # X-Forwarded-For 就能绕过按 IP 的登录失败锁定。
+      TRUST_PROXY: "false"
+
+    volumes:
+      - keel-data:/data
+      - keel-logs:/logs
+      - keel-workspaces:/workspaces
+      # 只读挂载：容器需要读到私钥来部署目标机器，但不该改动宿主机的 ssh 配置
+      - /root/.ssh:/root/.ssh:ro
+
+    networks:
+      - default
+      # 与同机 Gitea 直连：Gitea 可以用容器名 http://keel:8000/webhook 回调，
+      # 不必把 8000 暴露到公网。该网络不存在时先执行：
+      #   docker network create git_gitea-net
+      - gitea
+
+    # 部署任务会起构建进程，给它一点余量但别把宿主机吃满
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  keel-data:
+  keel-logs:
+  keel-workspaces:
+
+networks:
+  # 声明成 external：网络由 Gitea 那套 compose 创建，这里只加入、不接管，
+  # 避免 `docker compose down` 把它顺手删掉从而影响 Gitea。
+  gitea:
+    external: true
+    name: git_gitea-net

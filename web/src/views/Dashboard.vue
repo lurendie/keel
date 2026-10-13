@@ -1,534 +1,631 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ArrowRight, Box, CircleCheck, Clock, Plus, Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import StatusPill from "../components/StatusPill.vue";
+import PageIntro from "../components/PageIntro.vue";
+import MetricRing from "../components/MetricRing.vue";
+import StatusChip from "../components/StatusChip.vue";
 import {
+  deployProject,
+  getAllMetrics,
   listDeployments,
   listProjects,
+  listServers,
   type Deployment,
   type Project,
+  type Server,
+  type ServerMetrics,
 } from "../api/api";
-import {  formatTime } from "../utils/format";
+import {
+  displayStatus,
+  statusLabel,
+  versionFromMessage,
+} from "../constants/deploy";
+import { formatTime } from "../utils/format";
 
 const router = useRouter();
+
+const servers = ref<Server[]>([]);
 const projects = ref<Project[]>([]);
 const deployments = ref<Deployment[]>([]);
+const metrics = ref<Map<number, ServerMetrics>>(new Map());
+const sampledAt = ref("");
 const loading = ref(true);
+const sampling = ref(false);
 const error = ref("");
+const deployingId = ref<number | null>(null);
 
-const enabledProjects = computed(() => projects.value.filter((project) => project.enabled));
-const successfulDeployments = computed(
-  () => deployments.value.filter((deployment) => deployment.status === "success").length,
-);
-const failedDeployments = computed(
-  () => deployments.value.filter((deployment) => deployment.status === "failed").length,
+const enabledProjects = computed(() => projects.value.filter((p) => p.enabled));
+const recentDeployments = computed(() => deployments.value.slice(0, 6));
+const failedRecent = computed(() =>
+  deployments.value.filter((d) => d.status === "failed"),
 );
 
-const loadDashboard = async () => {
+/** 只统计有指标且连得上的服务器，避免把离线机器算成「0% 很闲」。 */
+const reachableCount = computed(
+  () => servers.value.filter((s) => metrics.value.get(s.id)?.reachable).length,
+);
+
+/** 资源最吃紧的一项，作为「需要关注」的第二种信号。 */
+const hotServer = computed(() => {
+  const candidates: { server: Server; metric: string; value: number }[] = [];
+
+  for (const server of servers.value) {
+    const m = metrics.value.get(server.id);
+    if (!m?.reachable) {
+      continue;
+    }
+    const readings: [string, number | null][] = [
+      ["CPU", m.cpu_percent],
+      ["内存", m.mem_percent],
+      ["磁盘", m.disk_percent],
+    ];
+    for (const [metric, value] of readings) {
+      if (value !== null && value >= 85) {
+        candidates.push({ server, metric, value: Math.round(value) });
+      }
+    }
+  }
+
+  return candidates.sort((a, b) => b.value - a.value)[0] ?? null;
+});
+
+function metricFor(serverId: number): ServerMetrics | undefined {
+  return metrics.value.get(serverId);
+}
+
+function kbToGiB(kb: number | null): string {
+  return kb === null ? "—" : `${(kb / 1024 / 1024).toFixed(1)} GiB`;
+}
+
+async function load() {
   loading.value = true;
   error.value = "";
-
   try {
-    const [projectList, deploymentList] = await Promise.all([
+    const [serverList, projectList, deploymentList] = await Promise.all([
+      listServers(),
       listProjects(),
-      listDeployments(8),
+      listDeployments(20),
     ]);
+    servers.value = serverList;
     projects.value = projectList;
     deployments.value = deploymentList;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "控制台数据加载失败";
+    error.value = err instanceof Error ? err.message : "总览数据加载失败";
   } finally {
     loading.value = false;
   }
-};
+  // 采样要逐台建立 SSH 连接，比列表慢得多，单独跑，不挡住首屏。
+  await sample();
+}
 
-const open = (path: string) => router.push(path);
-
-const refresh = async () => {
-  await loadDashboard();
-  if (!error.value) {
-    ElMessage.success("控制台已刷新");
+async function sample() {
+  if (servers.value.length === 0) {
+    return;
   }
-};
+  sampling.value = true;
+  try {
+    const response = await getAllMetrics();
+    const next = new Map<number, ServerMetrics>();
+    for (const item of response.metrics) {
+      next.set(item.server_id, item);
+    }
+    metrics.value = next;
+    sampledAt.value = response.sampled_at;
+  } catch (err) {
+    ElMessage.warning(
+      err instanceof Error ? `资源采样失败：${err.message}` : "资源采样失败",
+    );
+  } finally {
+    sampling.value = false;
+  }
+}
 
-onMounted(loadDashboard);
+async function refresh() {
+  await load();
+  if (!error.value) {
+    ElMessage.success("已刷新");
+  }
+}
+
+function projectFor(deployment: Deployment): Project | undefined {
+  return projects.value.find((p) => p.id === deployment.project_id);
+}
+
+async function retry(deployment: Deployment) {
+  const project = projectFor(deployment);
+  if (!project) {
+    ElMessage.warning("该项目已被删除");
+    return;
+  }
+  deployingId.value = project.id;
+  try {
+    await deployProject(project.id);
+    ElMessage.success(`已触发 ${project.name} 的部署`);
+    await load();
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "触发部署失败");
+  } finally {
+    deployingId.value = null;
+  }
+}
+
+function open(path: string) {
+  void router.push(path);
+}
+
+let timer: number | undefined;
+
+onMounted(async () => {
+  await load();
+  // 列表轮询保持轻量；资源采样只在刷新时重跑，避免频繁 SSH 登录。
+  timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") {
+      void load();
+    }
+  }, 30000);
+});
+
+onUnmounted(() => {
+  if (timer) {
+    window.clearInterval(timer);
+  }
+});
 </script>
 
 <template>
-    <div class="dashboard-page">
-        <div v-if="error" class="dashboard-error">
-            <span>{{ error }}</span>
-            <el-button text @click="refresh">重试</el-button>
-        </div>
+    <div>
+        <PageIntro
+            eyebrow="Overview"
+            title="运行总览"
+            description="服务器资源、项目数量与最近发布的实时状态。"
+        >
+            <template #actions>
+                <span v-if="sampledAt" class="sampled mono">
+                    采样于 {{ formatTime(sampledAt) }}
+                </span>
+                <el-button :loading="sampling" @click="refresh">刷新</el-button>
+            </template>
+        </PageIntro>
 
-        <section class="dashboard-content">
+        <section class="content">
+            <div v-if="error" class="error-bar">
+                <span>{{ error }}</span>
+                <el-button text @click="refresh">重试</el-button>
+            </div>
 
-
-            <div class="metric-grid">
-                <div class="metric-card">
-                    <span class="metric-label">可部署项目</span>
-                    <strong>{{ enabledProjects.length }}</strong>
-                    <span class="metric-foot">共 {{ projects.length }} 个项目</span>
+            <div class="tiles">
+                <div class="tile">
+                    <div class="tile-v">
+                        {{ servers.length }}
+                        <i>/ {{ reachableCount }} 在线</i>
+                    </div>
+                    <div class="tile-k cap">服务器</div>
                 </div>
-                <div class="metric-card">
-                    <span class="metric-label">最近成功</span>
-                    <strong>{{ successfulDeployments }}</strong>
-                    <span class="metric-foot">最近 8 条记录</span>
+                <div class="tile">
+                    <div class="tile-v">
+                        {{ enabledProjects.length }}
+                        <i>/ {{ projects.length }} 启用</i>
+                    </div>
+                    <div class="tile-k cap">项目</div>
                 </div>
-                <div class="metric-card" :class="{ 'is-alert': failedDeployments > 0 }">
-                    <span class="metric-label">需要关注</span>
-                    <strong>{{ failedDeployments }}</strong>
-                    <span class="metric-foot">失败任务</span>
+                <div class="tile">
+                    <div class="tile-v">
+                        {{ deployments.length }}
+                        <i>条最近记录</i>
+                    </div>
+                    <div class="tile-k cap">部署</div>
                 </div>
-                <div class="metric-card metric-action" @click="open('/projects')">
-                    <span class="metric-label">下一步</span>
-                    <strong>管理项目 <ArrowRight /></strong>
-                    <span class="metric-foot">配置制品源与 SSH 目标</span>
+                <div class="tile">
+                    <div class="tile-v" :class="{ 'is-bad': failedRecent.length > 0 }">
+                        {{ failedRecent.length }}
+                        <i>次失败</i>
+                    </div>
+                    <div class="tile-k cap">需要关注</div>
                 </div>
             </div>
 
-            <div class="section-heading">
+            <div class="sec-head">
                 <div>
-                    <span class="section-kicker">Latest activity</span>
-                    <h3>最近部署</h3>
+                    <span class="cap">Server health</span>
+                    <div class="h2">服务器资源</div>
                 </div>
-                <el-button text class="text-button" @click="open('/deployments')">
-                    查看全部 <ArrowRight />
+                <span class="dim">CPU / 内存 / 磁盘</span>
+            </div>
+
+            <div v-if="loading" class="state">正在读取服务器状态...</div>
+
+            <div v-else-if="servers.length === 0" class="empty">
+                <strong>还没有服务器</strong>
+                <p>添加服务器后，这里会显示它们的资源占用。</p>
+                <el-button type="primary" @click="open('/servers')">
+                    去添加服务器
                 </el-button>
             </div>
 
-            <div v-if="loading" class="state-panel">正在读取部署状态...</div>
-            <div v-else-if="deployments.length === 0" class="empty-panel">
-                <div class="empty-icon"><Box /></div>
+            <div v-else class="sv-grid">
+                <article
+                    v-for="server in servers"
+                    :key="server.id"
+                    class="sv"
+                    :class="{ 'is-off': !metricFor(server.id)?.reachable }"
+                >
+                    <div class="sv-h">
+                        <div class="sv-n">
+                            <div class="sv-name">{{ server.name }}</div>
+                            <div class="sv-addr">
+                                {{ server.username }}@{{ server.host }}:{{ server.port }}
+                            </div>
+                        </div>
+                        <StatusChip
+                            :status="metricFor(server.id)?.reachable ? 'success' : 'failed'"
+                            :label="metricFor(server.id)?.reachable ? '在线' : '采不到'"
+                        />
+                    </div>
+
+                    <div class="sv-m">
+                        <MetricRing
+                            :value="metricFor(server.id)?.cpu_percent ?? null"
+                            label="CPU"
+                        />
+                        <MetricRing
+                            :value="metricFor(server.id)?.mem_percent ?? null"
+                            label="内存"
+                        />
+                        <MetricRing
+                            :value="metricFor(server.id)?.disk_percent ?? null"
+                            label="磁盘"
+                        />
+                    </div>
+
+                    <div class="sv-f">
+                        <span class="sv-meta">
+                            <span v-if="metricFor(server.id)?.os">
+                                {{ metricFor(server.id)?.os }}
+                            </span>
+                            <span v-if="metricFor(server.id)?.reachable">
+                                内存 {{ kbToGiB(metricFor(server.id)?.mem_used_kb ?? null) }}
+                                / {{ kbToGiB(metricFor(server.id)?.mem_total_kb ?? null) }}
+                                · {{ metricFor(server.id)?.disk_mount || "/" }}
+                            </span>
+                            <span v-else class="is-err">
+                                {{ metricFor(server.id)?.error || "无法连接" }}
+                            </span>
+                        </span>
+                        <el-button size="small" text @click="open('/servers')">
+                            详情
+                        </el-button>
+                    </div>
+                </article>
+            </div>
+
+            <template v-if="hotServer || failedRecent.length > 0">
+                <div class="sec-head">
+                    <span class="cap bad-cap">Needs attention</span>
+                </div>
+
+                <div v-if="hotServer" class="fault is-warn">
+                    <div class="fault-body">
+                        <div class="fault-n">
+                            {{ hotServer.server.name }}
+                            <StatusChip
+                                status="running"
+                                :label="`${hotServer.metric} ${hotServer.value}%`"
+                            />
+                        </div>
+                        <div class="fault-m">资源占用偏高，建议检查进程或扩容。</div>
+                    </div>
+                </div>
+
+                <div v-for="item in failedRecent.slice(0, 2)" :key="item.id" class="fault">
+                    <div class="fault-body">
+                        <div class="fault-n">
+                            {{ item.project_name }}
+                            <StatusChip status="failed" />
+                        </div>
+                        <div class="fault-e">{{ item.message || "部署失败" }}</div>
+                        <div class="fault-m">
+                            #{{ String(item.id).padStart(4, "0") }} · {{ item.branch }} ·
+                            {{ formatTime(item.started_at) }}
+                        </div>
+                    </div>
+                    <div class="fault-a">
+                        <el-button
+                            size="small"
+                            :disabled="!projectFor(item)"
+                            :loading="deployingId === item.project_id"
+                            @click="retry(item)"
+                        >
+                            重试部署
+                        </el-button>
+                        <el-button size="small" @click="open('/deployments')">
+                            查看日志
+                        </el-button>
+                    </div>
+                </div>
+            </template>
+
+            <div class="sec-head">
+                <div>
+                    <span class="cap">Recent activity</span>
+                    <div class="h2">最近发布</div>
+                </div>
+                <el-button text @click="open('/deployments')">全部记录 →</el-button>
+            </div>
+
+            <div v-if="!loading && recentDeployments.length === 0" class="empty">
                 <strong>还没有部署记录</strong>
-                <p>创建第一个项目后，手动触发一次部署，记录会出现在这里。</p>
+                <p>创建项目后手动触发一次部署，记录会出现在这里。</p>
                 <el-button type="primary" @click="open('/projects')">
-                    <el-icon><Plus /></el-icon>
-                    创建项目
+                    去创建项目
                 </el-button>
             </div>
-            <div v-else class="activity-list">
-                <div v-for="deployment in deployments.slice(0, 5)" :key="deployment.id" class="activity-row">
-                    <div class="activity-icon" :class="`status-${deployment.status}`">
-                        <CircleCheck v-if="deployment.status === 'success'" />
-                        <Clock v-else />
-                    </div>
-                    <div class="activity-main">
-                        <strong>{{ deployment.project_name }}</strong>
-                        <span>{{ deployment.message || `${deployment.branch} 分支部署任务` }}</span>
-                    </div>
-                    <div class="activity-branch">{{ deployment.branch }}</div>
-                    <StatusPill :status="deployment.status" :label="deployment.status === 'success' ? '成功' : deployment.status === 'failed' ? '失败' : '进行中'" />
-                    <time>{{ formatTime(deployment.started_at) }}</time>
+
+            <div v-else class="act">
+                <div class="act-h cap">
+                    <span>ID</span>
+                    <span>项目</span>
+                    <span>分支</span>
+                    <span>版本</span>
+                    <span>状态</span>
+                    <span class="right">时间</span>
                 </div>
+                <button
+                    v-for="item in recentDeployments"
+                    :key="item.id"
+                    class="act-r"
+                    type="button"
+                    @click="open('/deployments')"
+                >
+                    <span class="act-id">#{{ String(item.id).padStart(4, "0") }}</span>
+                    <span class="act-p">{{ item.project_name }}</span>
+                    <span class="act-m">{{ item.branch }}</span>
+                    <span class="act-m">{{ versionFromMessage(item.message) || "—" }}</span>
+                    <span>
+                        <StatusChip
+                            :status="displayStatus(item.status, item.message)"
+                            :label="statusLabel(displayStatus(item.status, item.message))"
+                        />
+                    </span>
+                    <span class="act-t">{{ formatTime(item.started_at) }}</span>
+                </button>
             </div>
         </section>
     </div>
 </template>
 
 <style scoped>
-.dashboard-page {
-    min-height: 100%;
-}
+.content { padding: 20px 24px 44px; }
 
-.dashboard-content {
-    padding: 28px 36px 44px;
-}
+.sampled { margin-right: 10px; color: var(--tx3); font-size: 11.5px; }
 
-.dashboard-error {
+.error-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin: 20px 36px 0;
-    padding: 12px 14px;
-    color: #9b4c42;
-    background: #f8e6e1;
-    border: 1px solid #edc7bd;
-    font-size: 13px;
+    margin-bottom: 12px;
+    padding: 10px 13px;
+    color: var(--bad);
+    background: var(--bad-bg);
+    border: 1px solid var(--bad-bd);
+    border-radius: var(--r);
+    font-size: 12.5px;
 }
 
-.quiet-button {
-    color: #000000;
-    background: #ffffff;
-    border: 1px solid #ffffff;
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+
+.tile {
+    padding: 13px 15px;
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: var(--r-lg);
 }
 
-.quiet-button:hover {
-    color: #202723;
-    background: #ffffff;
+.tile-v {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
 }
 
-.signal-strip {
+.tile-v i { color: var(--tx3); font-size: 12px; font-style: normal; font-weight: 400; }
+.tile-v.is-bad { color: var(--bad); }
+.tile-k { margin-top: 1px; }
+
+.sec-head {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
-    min-height: 190px;
-    padding: 28px 32px;
-    overflow: hidden;
-    background: #ffffff;
-    color: #202723;
-    border: 1px solid #ffffff;
+    gap: 16px;
+    margin: 24px 0 0;
 }
 
-.signal-copy {
-    position: relative;
-    z-index: 1;
-    max-width: 520px;
-}
+.sec-head .h2 { margin-top: 5px; }
+.bad-cap { color: var(--bad); }
 
-.signal-kicker,
-.section-kicker {
-    color: #737373;
-    font-size: 10px;
-    font-weight: 750;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-}
-
-.signal-copy h2 {
-    margin: 10px 0 8px;
-    font-family: Georgia, serif;
-    font-size: 30px;
-    font-weight: 500;
-    letter-spacing: 0;
-}
-
-.signal-copy p {
-    max-width: 490px;
-    margin: 0;
-    color: #6e786f;
+.state,
+.empty {
+    display: flex;
+    min-height: 140px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+    color: var(--tx3);
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: var(--r-lg);
     font-size: 13px;
-    line-height: 1.55;
 }
 
-.signal-visual {
-    position: relative;
-    width: min(36vw, 330px);
-    height: 112px;
-    margin-right: 10px;
-}
+.empty strong { color: var(--tx); font-size: 14px; }
+.empty p { margin: 0 0 4px; font-size: 12px; }
 
-.signal-line {
-    position: absolute;
-    top: 55px;
-    right: 0;
-    left: 0;
-    height: 1px;
-    background: #ffffff;
-}
-
-.signal-node,
-.signal-core {
-    position: absolute;
+.sv-grid {
     display: grid;
-    place-items: center;
-    border-radius: 50%;
-}
-
-.signal-node {
-    top: 50px;
-    width: 11px;
-    height: 11px;
-    background: #525252;
-    box-shadow: 0 0 0 6px rgba(82, 82, 82, 0.1);
-}
-
-.node-one {
-    left: 18%;
-}
-
-.node-two {
-    left: 48%;
-}
-
-.node-three {
-    right: 12%;
-}
-
-.signal-core {
-    top: 25px;
-    left: 39%;
-    width: 62px;
-    height: 62px;
-    color: #262626;
-    background: #ffffff;
-    border: 1px solid #ffffff;
-    box-shadow: 0 0 0 10px rgba(82, 82, 82, 0.05);
-}
-
-.signal-core :deep(svg) {
-    width: 23px;
-    height: 23px;
-}
-
-.signal-visual.is-active .signal-core {
-    animation: pulse 1.8s ease-in-out infinite;
-}
-
-.metric-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(346px, 1fr));
     gap: 10px;
     margin-top: 10px;
 }
 
-.metric-card {
+.sv {
     display: flex;
-    min-height: 118px;
-    padding: 18px 20px;
     flex-direction: column;
-    background: #ffffff;
-    border: 1px solid #d9ded9;
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: var(--r-lg);
+    transition: border-color 120ms;
 }
 
-.metric-label {
-    color: #78837b;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+.sv:hover { border-color: var(--bd2); }
+.sv.is-off { background: #fbfcfd; }
+
+.sv-h { display: flex; align-items: flex-start; gap: 9px; padding: 12px 13px 0; }
+.sv-n { min-width: 0; flex: 1; }
+.sv-name {
+    overflow: hidden;
+    font-size: 13.5px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sv-addr { margin-top: 2px; color: var(--tx3); font-family: var(--font-mono); font-size: 11px; }
+
+.sv-m {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    gap: 8px;
+    padding: 14px 13px 15px;
 }
 
-.metric-card strong {
+.sv-f {
     display: flex;
     align-items: center;
     gap: 7px;
-    margin-top: 13px;
-    color: #202723;
-    font-family: Georgia, serif;
-    font-size: 29px;
-    font-weight: 500;
+    padding: 9px 13px;
+    border-top: 1px solid var(--bd);
 }
 
-.metric-card strong :deep(svg) {
-    width: 19px;
+.sv-meta { display: flex; min-width: 0; flex-direction: column; gap: 1px; margin-right: auto; }
+.sv-meta span {
+    overflow: hidden;
+    color: var(--tx3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
+.sv-meta span.is-err { color: var(--bad); }
 
-.metric-foot {
-    margin-top: auto;
-    color: #929b94;
-    font-size: 11px;
-}
-
-.metric-card.is-alert strong {
-    color: #a94d42;
-}
-
-.metric-action {
-    cursor: pointer;
-}
-
-.metric-action:hover {
-    background: #ffffff;
-}
-
-.metric-action strong {
-    font-family: inherit;
-    font-size: 17px;
-    font-weight: 700;
-}
-
-.section-heading {
+.fault {
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    margin: 34px 0 14px;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 10px;
+    padding: 13px 14px;
+    background: var(--sf);
+    border: 1px solid var(--bad-bd);
+    border-left: 3px solid var(--bad);
+    border-radius: var(--r-lg);
 }
 
-.section-heading h3 {
-    margin: 7px 0 0;
-    color: #202723;
-    font-family: Georgia, serif;
-    font-size: 23px;
-    font-weight: 500;
+.fault.is-warn { border-color: var(--run-bd); border-left-color: var(--run); }
+.fault-body { min-width: 0; }
+.fault-n { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+
+.fault-e {
+    margin-top: 7px;
+    padding: 7px 10px;
+    color: #8c2b20;
+    background: var(--bad-bg);
+    border: 1px solid var(--bad-bd);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    word-break: break-all;
 }
 
-.text-button {
-    color: #58735f;
-    font-size: 12px;
+.fault-m { margin-top: 7px; color: var(--tx3); font-family: var(--font-mono); font-size: 11px; }
+.fault-a { display: flex; flex-shrink: 0; gap: 7px; margin-left: auto; padding-left: 12px; }
+
+.act {
+    margin-top: 10px;
+    overflow: hidden;
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: var(--r-lg);
 }
 
-.state-panel,
-.empty-panel {
-    display: flex;
-    min-height: 160px;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    color: #768178;
-    background: #ffffff;
-    border: 1px solid #ffffff;
-    font-size: 13px;
-}
-
-.empty-panel {
-    gap: 10px;
-}
-
-.empty-panel strong {
-    color: #354139;
-    font-size: 15px;
-}
-
-.empty-panel p {
-    margin: 0 0 6px;
-    color: #8a938c;
-    font-size: 12px;
-}
-
-.empty-icon {
+.act-h,
+.act-r {
     display: grid;
-    width: 38px;
-    height: 38px;
-    place-items: center;
-    color: #525252;
-    background: #f0f0f0;
-}
-
-.activity-list {
-    background: #ffffff;
-    border: 1px solid #d9ded9;
-}
-
-.activity-row {
-    display: grid;
-    grid-template-columns: 34px minmax(0, 1fr) 120px 86px 110px;
+    grid-template-columns: 58px minmax(130px, 1fr) 92px 80px 88px 84px;
     align-items: center;
     gap: 12px;
-    min-height: 66px;
-    padding: 0 16px;
-    border-bottom: 1px solid #e1e5e1;
+    padding: 0 13px;
 }
 
-.activity-row:last-child {
-    border-bottom: 0;
+.act-h { min-height: 31px; background: var(--sf2); border-bottom: 1px solid var(--bd); }
+.act-h .right { text-align: right; }
+
+.act-r {
+    width: 100%;
+    min-height: 40px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--bd);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    transition: background 120ms;
 }
 
-.activity-icon {
-    display: grid;
-    width: 28px;
-    height: 28px;
-    place-items: center;
-    border-radius: 50%;
-}
-
-.activity-icon :deep(svg) {
-    width: 15px;
-}
-
-.status-success {
-    color: #35688f;
-    background: #eaf2f8;
-}
-
-.status-failed {
-    color: #a94d42;
-    background: #f8e6e1;
-}
-
-.status-queued,
-.status-running {
-    color: #8a6d2f;
-    background: #f7efd5;
-}
-
-.activity-main {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-}
-
-.activity-main strong {
+.act-r:last-child { border-bottom: 0; }
+.act-r:hover { background: var(--sf2); }
+.act-id { color: var(--tx4); font-family: var(--font-mono); font-size: 11px; }
+.act-p {
     overflow: hidden;
-    color: #354139;
-    font-size: 13px;
+    font-size: 12.5px;
+    font-weight: 550;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-
-.activity-main span,
-.activity-branch,
-.activity-row time {
+.act-m {
     overflow: hidden;
-    color: #879189;
+    color: var(--tx2);
+    font-family: var(--font-mono);
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-
-.activity-row time {
+.act-t {
+    color: var(--tx3);
+    font-family: var(--font-mono);
+    font-size: 11px;
     text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
-@keyframes pulse {
-    0%,
-    100% {
-        box-shadow: 0 0 0 10px rgba(82, 82, 82, 0.07);
-    }
-    50% {
-        box-shadow: 0 0 0 20px rgba(82, 82, 82, 0.03);
-    }
+@media (max-width: 1240px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+@media (max-width: 1000px) {
+    .act-h,
+    .act-r { grid-template-columns: 52px minmax(110px, 1fr) 86px 88px; }
+    .act-h > :nth-child(3),
+    .act-r > :nth-child(3),
+    .act-h > :nth-child(4),
+    .act-r > :nth-child(4) { display: none; }
 }
 
-@media (max-width: 920px) {
-    .metric-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .activity-row {
-        grid-template-columns: 34px minmax(0, 1fr) 86px 96px;
-    }
-
-    .activity-branch {
-        display: none;
-    }
-}
-
-@media (max-width: 720px) {
-    .dashboard-content {
-        padding: 20px 18px 34px;
-    }
-
-    .signal-strip {
-        min-height: 230px;
-        padding: 24px;
-    }
-
-    .signal-visual {
-        position: absolute;
-        right: 22px;
-        bottom: 24px;
-        width: 180px;
-        height: 70px;
-        opacity: 0.55;
-        transform: scale(0.8);
-        transform-origin: bottom right;
-    }
-
-    .signal-copy h2 {
-        max-width: 230px;
-        font-size: 26px;
-    }
-
-    .activity-row {
-        grid-template-columns: 34px minmax(0, 1fr) 82px;
-        gap: 8px;
-        padding: 0 10px;
-    }
-
-    .activity-row .status-pill {
-        justify-self: end;
-    }
-
-    .activity-row time {
-        display: none;
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .signal-visual.is-active .signal-core {
-        animation: none;
-    }
+@media (max-width: 760px) {
+    .content { padding: 14px 12px 34px; }
+    .tiles { grid-template-columns: 1fr; }
+    .fault { flex-wrap: wrap; }
+    .fault-a { width: 100%; margin-left: 0; padding: 9px 0 0; }
 }
 </style>

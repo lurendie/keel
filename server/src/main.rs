@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     body::Bytes,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{header, HeaderMap, HeaderName, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -12,14 +12,17 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::Sha256;
 use std::{
     env, fs,
+    net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use subtle::ConstantTimeEq;
 use tokio::{sync::Semaphore, task};
 use tower_http::{
     cors::{Any, CorsLayer},
+    services::{ServeDir, ServeFile},
     trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
@@ -28,23 +31,62 @@ mod auth;
 mod db;
 mod deploy;
 mod logging;
+mod metrics;
 mod models;
+mod net;
 mod state;
 mod utils;
 
-use auth::{authenticate, hash_password, issue_token, verify_password};
+use auth::{authenticate, hash_password, issue_token, verify_password, LoginThrottle};
 use db::{
-    get_or_create_jwt_secret, get_project_by_id, get_setting, init_db, insert_deployment,
-    list_projects_by_branch, project_from_row, update_deployment_status, validate_project_payload,
+    deploy_target_for_server, fail_interrupted_deployments, get_or_create_jwt_secret,
+    get_project_by_id, get_setting, init_db, insert_deployment, list_projects_by_branch,
+    list_servers, project_from_row, update_deployment_status, validate_project_payload,
+    validate_server_payload, PROJECT_SELECT,
 };
 use models::{
     ApiUser, ArtifactReadyRequest, ChangePasswordRequest, Deployment, DeploymentDetail,
     ListDeploymentsQuery, LoginRequest, LoginResponse, MessageResponse, Project, PushPayload,
-    ReleaseAsset, ReleaseWebhookPayload, UpdateWebhookSecretRequest, UpsertProjectRequest,
-    WebhookSecretResponse,
+    ReleaseAsset, ReleaseWebhookPayload, ServerMetrics, ServerMetricsResponse, ServerTestResponse,
+    UpdateWebhookSecretRequest, UpsertProjectRequest, UpsertServerRequest, WebhookSecretResponse,
 };
 use state::AppState;
 use utils::{debug, error, json_error, log, now_ts, warn};
+
+/// 可选字段的空串归一化成 NULL：前端表单清空字段时传的是 ""，
+/// 直接落库会让 `TRIM(x) = ''` 和 NULL 两种「空」在判断里分叉。
+fn trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// 前端构建产物目录。
+///
+/// 优先读 `KEEL_WEB_ROOT`（容器里指向 /app/web），否则回退到相对可执行文件
+/// 的几个常见位置，方便直接在仓库里 `cargo run`。
+fn web_root() -> Option<PathBuf> {
+    if let Ok(value) = env::var("KEEL_WEB_ROOT") {
+        let path = PathBuf::from(value);
+        if path.join("index.html").is_file() {
+            return Some(path);
+        }
+        warn(&format!(
+            "KEEL_WEB_ROOT 指向的目录没有 index.html: {}",
+            path.display()
+        ));
+    }
+
+    let candidates = ["web/dist", "../web/dist", "../../web/dist"];
+    for candidate in candidates {
+        let path = PathBuf::from(candidate);
+        if path.join("index.html").is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -69,6 +111,12 @@ async fn main() -> Result<()> {
         log("A secure admin password was generated. Save it now and change it after login.");
         log(&format!("Initial admin credentials: admin / {password}"));
     }
+    let interrupted = fail_interrupted_deployments(&conn)?;
+    if interrupted > 0 {
+        warn(&format!(
+            "Marked {interrupted} deployment(s) interrupted by a restart as failed."
+        ));
+    }
 
     let jwt_secret = match env::var("JWT_SECRET") {
         Ok(value) if !value.trim().is_empty() => value,
@@ -77,10 +125,23 @@ async fn main() -> Result<()> {
             get_or_create_jwt_secret(&conn)?
         }
     };
+    let trust_proxy = env::var("TRUST_PROXY").unwrap_or_default();
+    let trusted_proxies = net::TrustedProxies::parse(&trust_proxy)
+        .with_context(|| format!("Failed to parse TRUST_PROXY: {}", trust_proxy.trim()))?;
 
     let bind = get_setting(&conn, "webhook_bind")?.unwrap_or_else(|| "0.0.0.0:8000".to_string());
     let webhook_path =
         get_setting(&conn, "webhook_path")?.unwrap_or_else(|| "/webhook".to_string());
+    let webhook_secret = get_setting(&conn, "webhook_secret")?.unwrap_or_default();
+    if webhook_secret.trim().is_empty() && !bind_is_loopback(&bind) {
+        warn(&format!(
+            "webhook_secret 为空且监听在 {bind}，Push/Release webhook 不校验签名；\
+             任何能访问该地址的人都可以触发部署，请在系统设置中配置 webhook_secret。"
+        ));
+    }
+    if trusted_proxies.is_enabled() {
+        log(&format!("Trusted proxy peers: {}", trust_proxy.trim()));
+    }
     let deploy_concurrency = env::var("DEPLOY_MAX_CONCURRENCY")
         .ok()
         .as_deref()
@@ -92,9 +153,12 @@ async fn main() -> Result<()> {
         deploy_semaphore: Arc::new(Semaphore::new(deploy_concurrency)),
         project_locks: Arc::new(Mutex::new(std::collections::HashMap::new())),
         jwt_secret: Arc::new(jwt_secret),
+        trusted_proxies: Arc::new(trusted_proxies),
+        login_throttle: Arc::new(LoginThrottle::new()),
         git_path: Arc::new(git_path),
         workspace_root: Arc::new(workspace_root),
     };
+    let shutdown_state = state.clone();
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -106,6 +170,7 @@ async fn main() -> Result<()> {
         ]);
 
     let app = Router::new()
+        .route("/health", get(health))
         .route("/api/auth/login", post(auth_login))
         .route("/api/auth/me", get(auth_me))
         .route("/api/auth/change-password", post(change_password))
@@ -122,7 +187,33 @@ async fn main() -> Result<()> {
         .route("/api/deploy/:project_id", post(trigger_deploy))
         .route("/api/deployments", get(list_deployments))
         .route("/api/deployments/:id", get(get_deployment_detail))
-        .route(&webhook_path, post(handle_webhook))
+        .route("/api/servers", get(list_servers_handler).post(create_server))
+        .route(
+            "/api/servers/:id",
+            put(update_server).delete(delete_server),
+        )
+        .route("/api/servers/:id/test", post(test_server_connection))
+        .route("/api/servers/:id/metrics", get(server_metrics))
+        .route("/api/metrics", get(all_metrics))
+        .route(&webhook_path, post(handle_webhook));
+
+    // 前端构建产物。目录不存在时（本地前后端分离开发）直接跳过，
+    // 由 vite dev server 提供页面。
+    let app = match web_root() {
+        Some(dir) => {
+            log(&format!("Serving web UI from {}", dir.display()));
+            let index = dir.join("index.html");
+            app.fallback_service(
+                ServeDir::new(&dir).not_found_service(ServeFile::new(index)),
+            )
+        }
+        None => {
+            log("No web build found (set KEEL_WEB_ROOT to serve the UI)");
+            app
+        }
+    };
+
+    let app = app
         .layer(cors)
         .layer(
             TraceLayer::new_for_http()
@@ -142,14 +233,40 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
         .with_context(|| format!("Failed to bind {bind}"))?;
-    axum::serve(listener, app)
-        .await
-        .context("Server exited unexpectedly")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("Server exited unexpectedly")?;
+
+    drain_running_deployments(&shutdown_state, deploy_concurrency).await;
 
     Ok(())
 }
 
-async fn auth_login(State(state): State<AppState>, Json(payload): Json<LoginRequest>) -> Response {
+async fn auth_login(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(payload): Json<LoginRequest>,
+) -> Response {
+    let login_ip = net::client_ip(&headers, peer, &state.trusted_proxies);
+    let throttle_key = login_ip.to_string();
+
+    if let Some(retry_after) = state.login_throttle.retry_after(&throttle_key) {
+        warn(&format!("Login throttled for {throttle_key}"));
+        return json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "登录尝试过于频繁，请在 {} 秒后重试",
+                retry_after.as_secs().max(1)
+            ),
+        )
+        .into_response();
+    }
+
     let conn = match state.db.lock() {
         Ok(c) => c,
         Err(_) => {
@@ -179,17 +296,30 @@ async fn auth_login(State(state): State<AppState>, Json(payload): Json<LoginRequ
     };
 
     let Some((id, username, password_hash)) = user_row else {
+        state.login_throttle.record_failure(&throttle_key);
         return json_error(StatusCode::UNAUTHORIZED, "用户名或密码错误").into_response();
     };
 
     match verify_password(&payload.password, &password_hash) {
-        Ok(true) => {}
+        Ok(true) => state.login_throttle.record_success(&throttle_key),
         Ok(false) => {
-            return json_error(StatusCode::UNAUTHORIZED, "用户名或密码错误").into_response()
+            state.login_throttle.record_failure(&throttle_key);
+            return json_error(StatusCode::UNAUTHORIZED, "用户名或密码错误").into_response();
         }
         Err(err) => {
             return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
         }
+    }
+
+    let login_ip_text = login_ip.to_string();
+    let login_at = now_ts();
+    if let Err(err) = conn.execute(
+        "UPDATE users
+         SET last_login_ip = ?1, last_login_at = ?2
+         WHERE id = ?3",
+        params![login_ip_text, login_at, id],
+    ) {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
     let token = match issue_token(&state, &username) {
@@ -203,7 +333,12 @@ async fn auth_login(State(state): State<AppState>, Json(payload): Json<LoginRequ
         StatusCode::OK,
         Json(LoginResponse {
             token,
-            user: ApiUser { id, username },
+            user: ApiUser {
+                id,
+                username,
+                last_login_ip: Some(login_ip_text),
+                last_login_at: Some(login_at),
+            },
         }),
     )
         .into_response()
@@ -213,6 +348,29 @@ async fn auth_me(State(state): State<AppState>, headers: HeaderMap) -> impl Into
     match authenticate(&headers, &state) {
         Ok(user) => (StatusCode::OK, Json(user)).into_response(),
         Err(err) => json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response(),
+    }
+}
+
+/// Unauthenticated liveness probe for systemd, containers and load balancers.
+async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let database_reachable = state
+        .db
+        .lock()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                .ok()
+        })
+        .is_some();
+
+    if database_reachable {
+        (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "status": "unavailable" })),
+        )
+            .into_response()
     }
 }
 
@@ -359,10 +517,7 @@ async fn list_projects(State(state): State<AppState>, headers: HeaderMap) -> imp
         }
     };
 
-    let mut stmt = match conn.prepare(
-        "SELECT id, name, repo_path, branch, workdir, build_command, built_path, artifact_url, artifact_sha256, ssh_host, ssh_port, ssh_user, ssh_private_key_path, ssh_private_key_passphrase, deploy_path, stop_command, start_command, enabled, created_at, updated_at, deploy_mode
-         FROM projects ORDER BY id DESC",
-    ) {
+    let mut stmt = match conn.prepare(&format!("{PROJECT_SELECT} ORDER BY p.id DESC")) {
         Ok(s) => s,
         Err(err) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     };
@@ -411,12 +566,9 @@ async fn create_project(
 
     let now = now_ts();
     let enabled = if payload.enabled { 1 } else { 0 };
-    let ssh_private_key_passphrase = payload
-        .ssh_private_key_passphrase
-        .filter(|value| !value.trim().is_empty());
     let result = conn.execute(
-        "INSERT INTO projects (name, repo_path, branch, workdir, build_command, built_path, artifact_url, artifact_sha256, ssh_host, ssh_port, ssh_user, ssh_private_key_path, ssh_private_key_passphrase, deploy_path, stop_command, start_command, enabled, created_at, updated_at, deploy_mode)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18, ?19)",
+        "INSERT INTO projects (name, repo_path, branch, workdir, build_command, built_path, artifact_url, artifact_sha256, server_id, deploy_path, stop_command, start_command, enabled, created_at, updated_at, deploy_mode)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15)",
         params![
             payload.name,
             payload.repo_path,
@@ -424,13 +576,9 @@ async fn create_project(
             payload.workdir,
             payload.build_command,
             payload.built_path,
-            payload.artifact_url,
-            payload.artifact_sha256,
-            payload.ssh_host,
-            payload.ssh_port,
-            payload.ssh_user,
-            payload.ssh_private_key_path,
-            ssh_private_key_passphrase,
+            Option::<String>::None,
+            Option::<String>::None,
+            payload.server_id,
             payload.deploy_path,
             payload.stop_command,
             payload.start_command,
@@ -476,15 +624,11 @@ async fn update_project(
     let enabled = if payload.enabled { 1 } else { 0 };
     let result = conn.execute(
         "UPDATE projects
-         SET name = ?1, repo_path = ?2, branch = ?3, workdir = ?4, build_command = ?5, built_path = ?6, artifact_url = ?7, artifact_sha256 = ?8,
-             ssh_host = ?9, ssh_port = ?10, ssh_user = ?11, ssh_private_key_path = ?12,
-             ssh_private_key_passphrase = CASE
-                 WHEN ?13 IS NULL THEN ssh_private_key_passphrase
-                 WHEN TRIM(?13) = '' THEN NULL
-                 ELSE ?13
-             END,
-             deploy_path = ?14, stop_command = ?15, start_command = ?16, enabled = ?17, updated_at = ?18, deploy_mode = ?19
-         WHERE id = ?20",
+         SET name = ?1, repo_path = ?2, branch = ?3, workdir = ?4, build_command = ?5, built_path = ?6,
+             artifact_url = ?7, artifact_sha256 = ?8, server_id = ?9,
+             deploy_path = ?10, stop_command = ?11, start_command = ?12, enabled = ?13,
+             updated_at = ?14, deploy_mode = ?15
+         WHERE id = ?16",
         params![
             payload.name,
             payload.repo_path,
@@ -492,13 +636,9 @@ async fn update_project(
             payload.workdir,
             payload.build_command,
             payload.built_path,
-            payload.artifact_url,
-            payload.artifact_sha256,
-            payload.ssh_host,
-            payload.ssh_port,
-            payload.ssh_user,
-            payload.ssh_private_key_path,
-            payload.ssh_private_key_passphrase,
+            Option::<String>::None,
+            Option::<String>::None,
+            payload.server_id,
             payload.deploy_path,
             payload.stop_command,
             payload.start_command,
@@ -554,6 +694,369 @@ async fn delete_project(
         Ok(_) => json_error(StatusCode::NOT_FOUND, "项目不存在").into_response(),
         Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
+}
+
+/* ------------------------------------------------------------------
+   servers
+   ------------------------------------------------------------------ */
+
+async fn list_servers_handler(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+
+    let conn = match state.db.lock() {
+        Ok(c) => c,
+        Err(_) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                .into_response()
+        }
+    };
+
+    match list_servers(&conn) {
+        Ok(list) => (StatusCode::OK, Json(list)).into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+async fn create_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<UpsertServerRequest>,
+) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+    if let Err(err) = validate_server_payload(&payload) {
+        return json_error(StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
+
+    let conn = match state.db.lock() {
+        Ok(c) => c,
+        Err(_) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                .into_response()
+        }
+    };
+
+    let now = now_ts();
+    let result = conn.execute(
+        "INSERT INTO servers
+         (name, group_name, host, port, username, auth_method, private_key_path,
+          private_key_passphrase, password, deploy_path, enabled, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+        params![
+            payload.name.trim(),
+            trimmed(payload.group_name.as_deref()),
+            payload.host.trim(),
+            payload.port,
+            payload.username.trim(),
+            payload.auth_method,
+            trimmed(payload.private_key_path.as_deref()),
+            trimmed(payload.private_key_passphrase.as_deref()),
+            trimmed(payload.password.as_deref()),
+            trimmed(payload.deploy_path.as_deref()),
+            i64::from(payload.enabled),
+            now,
+        ],
+    );
+
+    match result {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(MessageResponse {
+                message: "服务器已创建".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+async fn update_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(payload): Json<UpsertServerRequest>,
+) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+    if let Err(err) = validate_server_payload(&payload) {
+        return json_error(StatusCode::BAD_REQUEST, err.to_string()).into_response();
+    }
+
+    let conn = match state.db.lock() {
+        Ok(c) => c,
+        Err(_) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                .into_response()
+        }
+    };
+
+    // 凭据字段是「三态」：None 保持原值、空串清除、有值覆盖。
+    // 前端不会回传已保存的密码，所以不能把 None 当成清空。
+    let result = conn.execute(
+        "UPDATE servers
+         SET name = ?1, group_name = ?2, host = ?3, port = ?4, username = ?5, auth_method = ?6,
+             private_key_path = ?7,
+             private_key_passphrase = CASE
+                 WHEN ?8 IS NULL THEN private_key_passphrase
+                 WHEN TRIM(?8) = '' THEN NULL
+                 ELSE ?8
+             END,
+             password = CASE
+                 WHEN ?9 IS NULL THEN password
+                 WHEN TRIM(?9) = '' THEN NULL
+                 ELSE ?9
+             END,
+             deploy_path = ?10, enabled = ?11, updated_at = ?12
+         WHERE id = ?13",
+        params![
+            payload.name.trim(),
+            trimmed(payload.group_name.as_deref()),
+            payload.host.trim(),
+            payload.port,
+            payload.username.trim(),
+            payload.auth_method,
+            trimmed(payload.private_key_path.as_deref()),
+            payload.private_key_passphrase,
+            payload.password,
+            trimmed(payload.deploy_path.as_deref()),
+            i64::from(payload.enabled),
+            now_ts(),
+            id,
+        ],
+    );
+
+    match result {
+        Ok(affected) if affected > 0 => (
+            StatusCode::OK,
+            Json(MessageResponse {
+                message: "服务器已更新".to_string(),
+            }),
+        )
+            .into_response(),
+        Ok(_) => json_error(StatusCode::NOT_FOUND, "服务器不存在").into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+async fn delete_server(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+
+    let conn = match state.db.lock() {
+        Ok(c) => c,
+        Err(_) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                .into_response()
+        }
+    };
+
+    let referenced: i64 = match conn.query_row(
+        "SELECT COUNT(*) FROM projects WHERE server_id = ?1",
+        params![id],
+        |row| row.get(0),
+    ) {
+        Ok(count) => count,
+        Err(err) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+        }
+    };
+
+    // 直接删会让引用它的项目失去部署目标，而报错信息里根本看不出是哪台服务器，
+    // 所以这里明确拒绝，让用户先去改项目。
+    if referenced > 0 {
+        return json_error(
+            StatusCode::CONFLICT,
+            format!("仍有 {referenced} 个项目在使用该服务器，请先改为其他服务器"),
+        )
+        .into_response();
+    }
+
+    match conn.execute("DELETE FROM servers WHERE id = ?1", params![id]) {
+        Ok(affected) if affected > 0 => (
+            StatusCode::OK,
+            Json(MessageResponse {
+                message: "服务器已删除".to_string(),
+            }),
+        )
+            .into_response(),
+        Ok(_) => json_error(StatusCode::NOT_FOUND, "服务器不存在").into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+async fn test_server_connection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+
+    let target = {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                    .into_response()
+            }
+        };
+        match deploy_target_for_server(&conn, id) {
+            Ok(Some(target)) => target,
+            Ok(None) => return json_error(StatusCode::NOT_FOUND, "服务器不存在").into_response(),
+            Err(err) => {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                    .into_response()
+            }
+        }
+    };
+
+    // SSH 握手是阻塞的，放到 blocking 线程池，避免占住 async worker。
+    let outcome = task::spawn_blocking(move || {
+        let mut log = String::new();
+        let result = deploy::test_connection(&target, &mut log);
+        (result, log)
+    })
+    .await;
+
+    match outcome {
+        Ok((Ok(()), log)) => (
+            StatusCode::OK,
+            Json(ServerTestResponse {
+                ok: true,
+                message: "连接正常".to_string(),
+                detail: log,
+            }),
+        )
+            .into_response(),
+        Ok((Err(err), log)) => (
+            StatusCode::OK,
+            Json(ServerTestResponse {
+                ok: false,
+                message: format!("{err:#}"),
+                detail: log,
+            }),
+        )
+            .into_response(),
+        Err(err) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("连接测试任务失败: {err}"),
+        )
+        .into_response(),
+    }
+}
+
+/// 采集单台服务器。共享一个 handler，避免 /api/metrics 与 /:id/metrics 两套逻辑。
+fn collect_metrics(targets: Vec<models::DeployTarget>) -> Vec<ServerMetrics> {
+    targets
+        .into_iter()
+        .map(|target| metrics::sample_server(&target))
+        .collect()
+}
+
+async fn server_metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+
+    let target = {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                    .into_response()
+            }
+        };
+        match deploy_target_for_server(&conn, id) {
+            Ok(Some(target)) => target,
+            Ok(None) => return json_error(StatusCode::NOT_FOUND, "服务器不存在").into_response(),
+            Err(err) => {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                    .into_response()
+            }
+        }
+    };
+
+    let sampled_at = now_ts();
+    let metrics = match task::spawn_blocking(move || collect_metrics(vec![target])).await {
+        Ok(list) => list,
+        Err(err) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("采样任务失败: {err}"))
+                .into_response()
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(ServerMetricsResponse { metrics, sampled_at }),
+    )
+        .into_response()
+}
+
+async fn all_metrics(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(err) = authenticate(&headers, &state) {
+        return json_error(StatusCode::UNAUTHORIZED, err.to_string()).into_response();
+    }
+
+    let targets = {
+        let conn = match state.db.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, "DB lock poisoned")
+                    .into_response()
+            }
+        };
+        let servers = match list_servers(&conn) {
+            Ok(list) => list,
+            Err(err) => {
+                return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                    .into_response()
+            }
+        };
+        let mut targets = Vec::new();
+        for summary in servers {
+            if !summary.server.enabled {
+                continue;
+            }
+            match deploy_target_for_server(&conn, summary.server.id) {
+                Ok(Some(target)) => targets.push(target),
+                Ok(None) => {}
+                Err(err) => {
+                    return json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                        .into_response()
+                }
+            }
+        }
+        targets
+    };
+
+    let sampled_at = now_ts();
+    let metrics = match task::spawn_blocking(move || collect_metrics(targets)).await {
+        Ok(list) => list,
+        Err(err) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("采样任务失败: {err}"))
+                .into_response()
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(ServerMetricsResponse { metrics, sampled_at }),
+    )
+        .into_response()
 }
 
 async fn trigger_deploy(
@@ -922,21 +1425,31 @@ fn handle_release_event(state: &AppState, body: &[u8]) -> StatusCode {
     }
 
     for project in projects.into_iter().filter(supports_remote_artifact) {
-        let Some(asset) =
-            select_release_asset(project.artifact_url.as_deref(), &payload.release.assets)
-        else {
+        let Some(asset) = select_release_asset(&payload.release.assets) else {
             log(&format!(
                 "No matching release asset for project: {}",
                 project.name
             ));
             continue;
         };
-        let sha256 = asset
+        let sha256 = match asset
             .digest
             .as_deref()
-            .map(normalize_sha256)
-            .transpose()
-            .unwrap_or(None);
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(digest) => match normalize_sha256(digest) {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    warn(&format!(
+                        "Skipping release {} for project {}: invalid asset digest ({err})",
+                        payload.release.tag_name, project.name
+                    ));
+                    continue;
+                }
+            },
+            None => None,
+        };
         let project =
             apply_artifact_override(&project, &asset.browser_download_url, sha256.as_deref());
         let message = format!(
@@ -1030,35 +1543,12 @@ fn artifact_ready_message(payload: &ArtifactReadyRequest) -> String {
     message
 }
 
-fn select_release_asset<'a>(
-    default_artifact_url: Option<&str>,
-    assets: &'a [ReleaseAsset],
-) -> Option<&'a ReleaseAsset> {
-    let expected_name = default_artifact_url.and_then(file_name_from_url);
-
-    if let Some(expected_name) = expected_name {
-        if let Some(asset) = assets
-            .iter()
-            .find(|asset| asset.name.eq_ignore_ascii_case(expected_name))
-        {
-            return Some(asset);
-        }
-    }
-
+fn select_release_asset(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
     if assets.len() == 1 {
         assets.first()
     } else {
         None
     }
-}
-
-fn file_name_from_url(url: &str) -> Option<&str> {
-    url.split('?')
-        .next()
-        .unwrap_or(url)
-        .rsplit('/')
-        .next()
-        .filter(|value| !value.is_empty())
 }
 
 fn normalize_repository(value: &str) -> String {
@@ -1109,6 +1599,61 @@ fn parse_deploy_concurrency(value: Option<&str>) -> usize {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(4)
         .clamp(1, 32)
+}
+
+/// Empty webhook secrets are only tolerable when nothing outside this host can
+/// reach the listener.
+fn bind_is_loopback(bind: &str) -> bool {
+    bind.parse::<SocketAddr>()
+        .map(|address| address.ip().is_loopback())
+        .unwrap_or_else(|_| bind.starts_with("localhost"))
+}
+
+const DEPLOY_DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Resolves on SIGINT or, on unix, SIGTERM.
+async fn shutdown_signal() {
+    let interrupt = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = interrupt => {}
+        _ = terminate => {}
+    }
+
+    log("Shutdown signal received: no longer accepting new requests.");
+}
+
+/// In-flight deployments run on blocking threads that graceful shutdown does not
+/// wait for, so give them a bounded chance to finish before the process exits.
+async fn drain_running_deployments(state: &AppState, concurrency: usize) {
+    let deadline = tokio::time::Instant::now() + DEPLOY_DRAIN_TIMEOUT;
+
+    while state.deploy_semaphore.available_permits() < concurrency {
+        if tokio::time::Instant::now() >= deadline {
+            warn(&format!(
+                "Deployment still running after {}s; exiting anyway.",
+                DEPLOY_DRAIN_TIMEOUT.as_secs()
+            ));
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    log("All running deployments finished.");
 }
 
 fn enqueue_project_deployment(state: AppState, project: Project, deploy_id: i64) {
@@ -1455,20 +2000,7 @@ fn deploy_artifact(src: &FsPath, dst: &FsPath) -> Result<()> {
         fs::metadata(src).with_context(|| format!("Source path not found: {}", src.display()))?;
 
     if src_meta.is_dir() {
-        if dst.exists() && !dst.is_dir() {
-            bail!(
-                "Deploy target must be directory for dir source: {}",
-                dst.display()
-            );
-        }
-        if dst.exists() {
-            fs::remove_dir_all(dst)
-                .with_context(|| format!("Failed to remove old deploy dir: {}", dst.display()))?;
-        }
-        fs::create_dir_all(dst)
-            .with_context(|| format!("Failed to create deploy dir: {}", dst.display()))?;
-        copy_dir_all(src, dst)?;
-        return Ok(());
+        return deploy_directory(src, dst);
     }
 
     let dst_is_dir = dst.exists() && dst.is_dir();
@@ -1486,13 +2018,105 @@ fn deploy_artifact(src: &FsPath, dst: &FsPath) -> Result<()> {
             .with_context(|| format!("Failed to create deploy parent dir: {}", parent.display()))?;
     }
 
-    fs::copy(src, &final_dst).with_context(|| {
+    replace_file(src, &final_dst)
+}
+
+/// Copies the directory next to its target and swaps it in with renames, so the
+/// live directory is never left half written. The previous release is kept next
+/// to it as `.<name>.previous` for manual rollback.
+fn deploy_directory(src: &FsPath, dst: &FsPath) -> Result<()> {
+    if dst.exists() && !dst.is_dir() {
+        bail!(
+            "Deploy target must be directory for dir source: {}",
+            dst.display()
+        );
+    }
+
+    let parent = dst
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| anyhow!("Deploy target has no parent directory: {}", dst.display()))?;
+    let name = dst
+        .file_name()
+        .ok_or_else(|| anyhow!("Deploy target has no file name: {}", dst.display()))?
+        .to_string_lossy()
+        .into_owned();
+
+    fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create deploy parent dir: {}", parent.display()))?;
+
+    let staging = parent.join(format!(".{name}.staging-{}", std::process::id()));
+    let previous = parent.join(format!(".{name}.previous"));
+
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .with_context(|| format!("Failed to clear staging dir: {}", staging.display()))?;
+    }
+    fs::create_dir_all(&staging)
+        .with_context(|| format!("Failed to create staging dir: {}", staging.display()))?;
+
+    if let Err(err) = copy_dir_all(src, &staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    if previous.exists() {
+        fs::remove_dir_all(&previous)
+            .with_context(|| format!("Failed to clear previous dir: {}", previous.display()))?;
+    }
+    if dst.exists() {
+        fs::rename(dst, &previous).with_context(|| {
+            format!(
+                "Failed to move current deploy aside: {} -> {}",
+                dst.display(),
+                previous.display()
+            )
+        })?;
+    }
+
+    if let Err(err) = fs::rename(&staging, dst) {
+        // Put the previous release back so a failed swap does not leave the
+        // deploy path missing.
+        let _ = fs::rename(&previous, dst);
+        let _ = fs::remove_dir_all(&staging);
+        return Err(err)
+            .with_context(|| format!("Failed to activate deploy dir: {}", dst.display()));
+    }
+
+    Ok(())
+}
+
+/// Writes next to the target before swapping, so a failed copy cannot truncate
+/// the live file.
+fn replace_file(src: &FsPath, dst: &FsPath) -> Result<()> {
+    let name = dst
+        .file_name()
+        .ok_or_else(|| anyhow!("Deploy target has no file name: {}", dst.display()))?;
+    let temp = dst.with_file_name(format!(
+        ".{}.tmp-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+
+    fs::copy(src, &temp).with_context(|| {
         format!(
             "Failed to copy from {} to {}",
             src.display(),
-            final_dst.display()
+            temp.display()
         )
     })?;
+
+    #[cfg(windows)]
+    if dst.exists() {
+        fs::remove_file(dst)
+            .with_context(|| format!("Failed to replace existing file: {}", dst.display()))?;
+    }
+
+    if let Err(err) = fs::rename(&temp, dst) {
+        let _ = fs::remove_file(&temp);
+        return Err(err)
+            .with_context(|| format!("Failed to activate deploy file: {}", dst.display()));
+    }
 
     Ok(())
 }
@@ -1706,14 +2330,6 @@ mod tests {
     }
 
     #[test]
-    fn extracts_artifact_file_name() {
-        assert_eq!(
-            file_name_from_url("https://example.com/releases/latest/download/app.zip?token=1"),
-            Some("app.zip")
-        );
-    }
-
-    #[test]
     fn detects_remote_git_urls() {
         assert!(is_remote_git_url("https://github.com/owner/repo.git"));
         assert!(is_remote_git_url("git@github.com:owner/repo.git"));
@@ -1723,25 +2339,14 @@ mod tests {
     }
 
     #[test]
-    fn selects_release_asset_by_default_file_name() {
-        let assets = vec![
-            ReleaseAsset {
-                name: "checksums.txt".to_string(),
-                browser_download_url: "https://example.com/checksums.txt".to_string(),
-                digest: None,
-            },
-            ReleaseAsset {
-                name: "app.zip".to_string(),
-                browser_download_url: "https://example.com/app.zip".to_string(),
-                digest: Some(format!("sha256:{}", "a".repeat(64))),
-            },
-        ];
+    fn selects_only_release_asset() {
+        let assets = vec![ReleaseAsset {
+            name: "app.zip".to_string(),
+            browser_download_url: "https://example.com/app.zip".to_string(),
+            digest: Some(format!("sha256:{}", "a".repeat(64))),
+        }];
 
-        let selected = select_release_asset(
-            Some("https://github.com/owner/repo/releases/latest/download/app.zip"),
-            &assets,
-        )
-        .unwrap();
+        let selected = select_release_asset(&assets).unwrap();
         assert_eq!(selected.name, "app.zip");
     }
 
@@ -1762,5 +2367,62 @@ mod tests {
 
         headers.insert("X-Auto-Deploy-Signature", "sha256=00".parse().unwrap());
         assert!(verify_hmac_signature(secret, &headers, body).is_err());
+    }
+
+    #[test]
+    fn directory_deploy_swaps_atomically_and_keeps_previous() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("build");
+        let dst = tmp.path().join("app");
+
+        fs::create_dir_all(src.join("nested")).unwrap();
+        fs::write(src.join("index.html"), b"v1").unwrap();
+        fs::write(src.join("nested/app.js"), b"v1").unwrap();
+        deploy_artifact(&src, &dst).unwrap();
+
+        assert_eq!(fs::read(dst.join("index.html")).unwrap(), b"v1");
+        assert_eq!(fs::read(dst.join("nested/app.js")).unwrap(), b"v1");
+
+        // Second release drops a file; the swap must not merge with the old tree.
+        fs::remove_file(src.join("nested/app.js")).unwrap();
+        fs::remove_dir(src.join("nested")).unwrap();
+        fs::write(src.join("index.html"), b"v2").unwrap();
+        deploy_artifact(&src, &dst).unwrap();
+
+        assert_eq!(fs::read(dst.join("index.html")).unwrap(), b"v2");
+        assert!(!dst.join("nested").exists());
+        assert_eq!(
+            fs::read(tmp.path().join(".app.previous/index.html")).unwrap(),
+            b"v1"
+        );
+
+        let leftovers = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("staging"))
+            .collect::<Vec<_>>();
+        assert!(leftovers.is_empty(), "staging leftovers: {leftovers:?}");
+    }
+
+    #[test]
+    fn file_deploy_replaces_target_without_leaving_temp_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("artifact.bin");
+        let dst = tmp.path().join("deployed.bin");
+
+        fs::write(&src, b"v1").unwrap();
+        deploy_artifact(&src, &dst).unwrap();
+        assert_eq!(fs::read(&dst).unwrap(), b"v1");
+
+        fs::write(&src, b"v2").unwrap();
+        deploy_artifact(&src, &dst).unwrap();
+        assert_eq!(fs::read(&dst).unwrap(), b"v2");
+
+        let leftovers = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("tmp-"))
+            .collect::<Vec<_>>();
+        assert!(leftovers.is_empty(), "temp leftovers: {leftovers:?}");
     }
 }

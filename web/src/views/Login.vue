@@ -100,53 +100,51 @@ const handleLogin = async () => {
 
 <style scoped>
 
-    /* 整个页面铺满，背景渐变色 */
     .login-container {
         display: flex;
-        justify-content: center;
         align-items: center;
+        justify-content: center;
         height: 100vh;
-        /* background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); */
-        margin: 0;
+        min-height: 100vh;
+        background: var(--pg);
         padding: 0;
     }
 
-    /* 卡片样式：居中、带阴影、圆角 */
     .login-card {
-        width: 400px;
-        padding: 20px 30px 30px;
-        border-radius: 16px;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(10px);
+        width: min(390px, calc(100vw - 28px));
+        padding: 24px;
+        border: 1px solid var(--bd);
+        border-radius: var(--r-lg);
+        box-shadow: none;
+        background: var(--sf);
     }
 
-    /* 头部标题 */
     .login-header {
-        text-align: center;
-        margin-bottom: 30px;
-    }
-
-    .login-header h2 {
-        font-size: 28px;
-        color: #333;
-        margin: 0 0 6px;
-    }
-
-    .login-header p {
-        color: #888;
-        font-size: 14px;
-        margin: 0;
-    }
-
-    /* 表单样式：去除 label 宽度，输入框撑满 */
-    .login-form .el-form-item {
         margin-bottom: 22px;
     }
 
-    /* 登录按钮全宽 */
+    .login-header h2 {
+        margin: 0;
+        color: var(--tx);
+        font-family: var(--font-mono);
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+    }
+
+    .login-header p {
+        margin: 7px 0 0;
+        color: var(--tx3);
+        font-size: 12px;
+    }
+
+    .login-form .el-form-item {
+        margin-bottom: 14px;
+    }
+
     .login-btn {
         width: 100%;
+        margin-top: 5px;
     }
 
 </style>

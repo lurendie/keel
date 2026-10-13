@@ -1,242 +1,147 @@
 <script setup lang="ts">
-import { ref } from "vue";
 import {
   Box,
-  Expand,
-  Fold,
-  DataLine,
   Clock,
+  DataLine,
   MagicStick,
+  Monitor,
   Setting,
 } from "@element-plus/icons-vue";
 
-const isCollapse = ref(false);
+const items = [
+  { to: "/dashboard", label: "控制台", icon: DataLine },
+  { to: "/servers", label: "服务器", icon: Monitor },
+  { to: "/projects", label: "项目管理", icon: Box },
+  { to: "/deployments", label: "部署记录", icon: Clock },
+  { to: "/settings", label: "系统设置", icon: Setting },
+  { to: "/ci-generator", label: "CI 生成器", icon: MagicStick },
+];
 </script>
 
 <template>
-    <el-aside :width="isCollapse ? '76px' : '236px'" class="layout-aside">
-        <div class="aside-top">
-            <div class="aside-mark">K</div>
-            <div v-if="!isCollapse" class="aside-intro">
-                <strong>Keel<br />Release Control</strong>
-                <span>stable releases, clear signals</span>
-            </div>
-            <el-button
-                class="collapse-button"
-                text
-                :aria-label="isCollapse ? '展开导航' : '收起导航'"
-                @click="isCollapse = !isCollapse"
+    <aside class="layout-aside">
+        <RouterLink class="brand" to="/dashboard" aria-label="Keel 控制台">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 1.6v16.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                <path d="M10 3 2.6 6.6v4L10 7l7.4 3.6v-4z" fill="currentColor" />
+                <path d="M4.2 12.4c1.3 2.9 3.5 4.6 5.8 5.4 2.3-.8 4.5-2.5 5.8-5.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+            <b>KEEL</b>
+        </RouterLink>
+
+        <nav class="nav" aria-label="主导航">
+            <RouterLink
+                v-for="item in items"
+                :key="item.to"
+                :to="item.to"
+                class="nav-item"
             >
-                <el-icon>
-                    <Expand v-if="isCollapse" />
-                    <Fold v-else />
-                </el-icon>
-            </el-button>
-        </div>
+                <el-icon><component :is="item.icon" /></el-icon>
+                <span>{{ item.label }}</span>
+            </RouterLink>
+        </nav>
 
-        <div class="nav-caption" :class="{ 'is-hidden': isCollapse }">Workspace</div>
-        <el-menu
-            :default-active="$route.path"
-            :collapse="isCollapse"
-            :collapse-transition="false"
-            class="side-menu"
-            router
-        >
-            <el-menu-item index="/dashboard">
-                <el-icon><DataLine /></el-icon>
-                <template #title>控制台</template>
-            </el-menu-item>
-            <el-menu-item index="/projects">
-                <el-icon><Box /></el-icon>
-                <template #title>项目管理</template>
-            </el-menu-item>
-            <el-menu-item index="/deployments">
-                <el-icon><Clock /></el-icon>
-                <template #title>部署记录</template>
-            </el-menu-item>
-            <el-menu-item index="/settings">
-                <el-icon><Setting /></el-icon>
-                <template #title>系统设置</template>
-            </el-menu-item>
-            <el-menu-item index="/ci-generator">
-                <el-icon><MagicStick /></el-icon>
-                <template #title>CI 生成器</template>
-            </el-menu-item>
-        </el-menu>
-
-        <div v-if="!isCollapse" class="aside-note">
-            <span class="note-dot"></span>
-            <span>Ingress is listening</span>
+        <div class="aside-foot">
+            <span class="connection"><i />已连接</span>
         </div>
-    </el-aside>
+    </aside>
 </template>
 
-<style lang="css" scoped>
+<style scoped>
 .layout-aside {
     display: flex;
+    width: var(--aside-w);
+    min-width: var(--aside-w);
+    min-height: 0;
     flex-direction: column;
-    flex-shrink: 0;
     overflow: hidden;
-    background: #ffffff;
-    border-right: 1px solid #e3e7e4;
-    transition: width 0.2s ease;
+    background: var(--sf);
+    border-right: 1px solid var(--bd);
 }
 
-.aside-top {
+.brand {
     display: flex;
+    height: var(--top-h);
     align-items: center;
-    min-height: 92px;
-    padding: 20px 16px 18px;
-    border-bottom: 1px solid #e8ece9;
-}
-
-.aside-mark {
-    display: grid;
+    gap: 10px;
+    padding: 0 14px;
+    color: var(--tx);
+    border-bottom: 1px solid var(--bd);
     flex-shrink: 0;
-    width: 42px;
-    height: 42px;
-    place-items: center;
-    color: #202723;
-    background: #f0f0f0;
-    font-family: "Arial Narrow", "Segoe UI", sans-serif;
-    font-size: 13px;
-    font-weight: 800;
-    letter-spacing: 0.1em;
+    text-decoration: none;
 }
 
-.aside-intro {
+.brand svg { color: var(--ok); }
+.brand b { font-size: 13px; font-weight: 700; letter-spacing: 0.16em; }
+
+.nav {
     display: flex;
-    min-width: 0;
-    margin-left: 12px;
     flex-direction: column;
+    gap: 1px;
+    padding: 10px 8px;
 }
 
-.aside-intro strong {
-    color: #202723;
-    font-size: 14px;
-    line-height: 1.15;
-    letter-spacing: 0.02em;
-}
-
-.aside-intro span {
-    margin-top: 8px;
-    color: #89928c;
-    font-size: 10px;
-    letter-spacing: 0.04em;
-}
-
-.collapse-button {
-    margin-left: auto;
-    color: #7b857e;
-}
-
-.collapse-button:hover,
-.collapse-button:focus-visible {
-    color: #171717;
-    background: #f3f3f3;
-}
-
-.nav-caption {
-    padding: 22px 24px 10px;
-    color: #939c96;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    transition: opacity 0.2s ease;
-}
-
-.nav-caption.is-hidden {
-    height: 42px;
-    padding: 22px 0 0;
-    opacity: 0;
-}
-
-.side-menu {
-    flex: 1;
-    border-right: 0;
-    background: transparent;
-}
-
-.side-menu :deep(.el-menu-item) {
-    height: 46px;
-    margin: 3px 12px;
-    border-radius: 4px;
-    color: #5f6b64;
-    font-size: 13px;
-}
-
-.side-menu :deep(.el-menu-item:hover) {
-    color: #171717;
-    background: #f5f5f5;
-}
-
-.side-menu :deep(.el-menu-item.is-active) {
-    color: #171717;
-    background: #eeeeee;
-}
-
-.side-menu :deep(.el-icon) {
-    font-size: 17px;
-}
-
-.aside-note {
+.nav-item {
     display: flex;
+    height: 34px;
     align-items: center;
-    gap: 8px;
-    margin: 18px 20px 24px;
-    padding-top: 14px;
-    color: #748078;
-    border-top: 1px solid #e8ece9;
+    gap: 9px;
+    padding: 0 9px;
+    color: var(--tx2);
+    border-radius: var(--r);
+    font-size: 13px;
+    text-decoration: none;
+    transition: color 120ms, background 120ms;
+}
+
+.nav-item .el-icon { flex-shrink: 0; color: var(--tx3); font-size: 14px; }
+.nav-item:hover { color: var(--tx); background: var(--sf2); }
+.nav-item.router-link-active {
+    color: var(--tx);
+    background: var(--sf3);
+    box-shadow: inset 2px 0 0 var(--ok);
+    font-weight: 600;
+}
+.nav-item.router-link-active .el-icon { color: var(--tx2); }
+
+.aside-foot {
+    margin-top: auto;
+    padding: 12px 14px 16px;
+    border-top: 1px solid var(--bd);
+}
+
+.connection {
+    display: inline-flex;
+    height: 21px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 7px;
+    color: var(--ok);
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-bd);
+    border-radius: 3px;
+    font-family: var(--font-mono);
     font-size: 11px;
 }
+.connection i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
-.note-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #737373;
-    box-shadow: 0 0 0 4px rgba(115, 115, 115, 0.12);
-}
-
-@media (max-width: 720px) {
+@media (max-width: 760px) {
     .layout-aside {
-        position: fixed;
-        z-index: 20;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        width: 76px !important;
+        width: 100%;
+        min-width: 0;
+        height: 50px;
+        min-height: 50px;
+        flex-direction: row;
+        align-items: center;
+        overflow-x: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--bd);
     }
 
-    .aside-intro,
-    .nav-caption,
-    .aside-note {
-        display: none;
-    }
-
-    .aside-top {
-        justify-content: center;
-        padding: 20px 12px;
-    }
-
-    .collapse-button {
-        display: none;
-    }
-
-    .side-menu {
-        width: 76px;
-    }
-
-    .side-menu :deep(.el-menu-item) {
-        justify-content: center;
-        margin: 3px 8px;
-        padding: 0 !important;
-        font-size: 0;
-    }
-
-    .side-menu :deep(.el-icon) {
-        font-size: 17px;
-    }
+    .brand { height: 50px; padding: 0 12px; border-bottom: 0; }
+    .nav { flex: 1; flex-direction: row; gap: 3px; padding: 0 10px 0 0; }
+    .nav-item { height: 32px; flex-shrink: 0; white-space: nowrap; }
+    .nav-item.router-link-active { box-shadow: inset 0 -2px 0 var(--ok); }
+    .aside-foot { display: none; }
 }
 </style>

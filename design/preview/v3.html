@@ -1,0 +1,1672 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Keel 控制台 · UI 方案 V3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   Keel V3 — 白色控制台
+   浅色底 + 深色文字，状态用高辨识度的实色
+   ============================================================ */
+:root {
+    --pg: #f6f8fa;      /* 页面底 */
+    --sf: #fff;         /* 表面 */
+    --sf2: #f3f5f8;     /* 次级表面 / 表头 */
+    --sf3: #e9edf2;     /* hover */
+
+    --bd: #e2e7ee;
+    --bd2: #ced6e0;
+    --bd3: #b4bfcc;
+
+    --tx: #0f1419;
+    --tx2: #5b6675;
+    --tx3: #8b95a3;
+    --tx4: #adb6c2;
+
+    /* 交互强调：石墨黑 */
+    --acs: #1b2430;
+    --acs-fg: #fff;
+
+    /* 状态色 —— 白底上必须够深才读得清 */
+    --ok: #0b7a5a;   --ok-bg: #e3f6ef;  --ok-bd: #a8ddc9;  --ok-fill: #16a97c;
+    --run: #a86300;  --run-bg: #fdf1dc; --run-bd: #eccf95; --run-fill: #e29a1f;
+    --bad: #c0392b;  --bad-bg: #fdecea; --bad-bd: #f2bdb5; --bad-fill: #e05243;
+    --neu: #6b7684;  --neu-bg: #f0f2f5; --neu-bd: #d8dde4; --neu-fill: #97a1ad;
+    --tag: #1668b3;  --tag-bg: #e8f2fb; --tag-bd: #b6d5ef;
+
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+    --aside-w: 218px;
+    --top-h: 52px;
+    --r: 4px;
+    --r-lg: 6px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+    color: var(--tx);
+    background: var(--pg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+::selection { color: #fff; background: var(--tag); }
+:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; border-radius: 3px; }
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ccd4de; border: 3px solid transparent; background-clip: content-box; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #adb8c6; background-clip: content-box; }
+
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.cap {
+    color: var(--tx3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.dim { color: var(--tx3); font-size: 12px; }
+.h1 { margin-top: 5px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.h2 { font-size: 13px; font-weight: 600; }
+
+/* ============================================================
+   外壳
+   ============================================================ */
+.shell { display: grid; grid-template-columns: var(--aside-w) minmax(0, 1fr); height: 100vh; }
+
+.aside { display: flex; min-height: 0; flex-direction: column; background: var(--sf); border-right: 1px solid var(--bd); }
+.brand { display: flex; align-items: center; gap: 10px; height: var(--top-h); padding: 0 14px; border-bottom: 1px solid var(--bd); }
+.brand svg { flex-shrink: 0; color: var(--ok); }
+.brand-txt { display: flex; align-items: baseline; gap: 7px; }
+.brand-name { font-size: 13px; font-weight: 700; letter-spacing: 0.16em; }
+.brand-sub { color: var(--tx4); font-size: 10px; }
+
+.nav { display: flex; flex-direction: column; gap: 1px; padding: 10px 8px; }
+.nav-cap { padding: 6px 6px 8px; }
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 34px;
+    padding: 0 9px;
+    color: var(--tx2);
+    border-radius: var(--r);
+    font-size: 13px;
+    text-decoration: none;
+    transition: background 120ms, color 120ms;
+}
+
+.nav-item:hover { color: var(--tx); background: var(--sf2); }
+.nav-item.is-active { color: var(--tx); background: var(--sf3); box-shadow: inset 2px 0 0 var(--ok); font-weight: 550; }
+.nav-item svg { flex-shrink: 0; color: var(--tx3); }
+.nav-item.is-active svg { color: var(--tx2); }
+.nav-badge { margin-left: auto; padding: 1px 5px; color: var(--tx3); background: var(--sf2); border: 1px solid var(--bd); border-radius: 3px; font-family: var(--font-mono); font-size: 10px; }
+.nav-item.is-active .nav-badge { background: var(--sf); }
+
+.aside-foot { margin-top: auto; padding: 12px 14px 16px; border-top: 1px solid var(--bd); }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: var(--top-h); padding: 0 18px; background: var(--sf); border-bottom: 1px solid var(--bd); }
+.top-l { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.top-title { padding-left: 11px; border-left: 1px solid var(--bd); font-size: 13.5px; font-weight: 600; }
+.top-r { display: flex; align-items: center; gap: 6px; }
+.who { display: flex; align-items: center; gap: 8px; margin-left: 4px; padding-left: 10px; border-left: 1px solid var(--bd); }
+.who-av { display: grid; width: 26px; height: 26px; place-items: center; color: var(--ok); background: var(--ok-bg); border: 1px solid var(--ok-bd); border-radius: var(--r); font-size: 11px; font-weight: 700; }
+.who-n { font-size: 12px; font-weight: 550; }
+
+.main { min-height: 0; overflow-y: auto; }
+.canvas { max-width: 1480px; margin: 0 auto; padding: 20px 22px 60px; }
+.canvas--narrow { max-width: 1020px; }
+
+/* ============================================================
+   原语
+   ============================================================ */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 29px;
+    padding: 0 11px;
+    color: var(--tx);
+    background: var(--sf);
+    border: 1px solid var(--bd2);
+    border-radius: var(--r);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12.5px;
+    white-space: nowrap;
+    transition: background 120ms, border-color 120ms;
+}
+
+.btn:hover { background: var(--sf2); border-color: var(--bd3); }
+.btn--p { color: var(--acs-fg); background: var(--acs); border-color: var(--acs); font-weight: 550; }
+.btn--p:hover { background: #2a3644; border-color: #2a3644; }
+.btn--g { color: var(--tx2); background: transparent; border-color: transparent; }
+.btn--g:hover { color: var(--tx); background: var(--sf2); border-color: transparent; }
+.btn--sm { height: 25px; padding: 0 8px; font-size: 12px; }
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 21px;
+    padding: 0 7px;
+    border: 1px solid;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.chip::before { width: 5px; height: 5px; flex-shrink: 0; content: ""; border-radius: 50%; background: currentColor; }
+
+.chip--ok  { color: var(--ok);  background: var(--ok-bg);  border-color: var(--ok-bd); }
+.chip--run { color: var(--run); background: var(--run-bg); border-color: var(--run-bd); }
+.chip--bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-bd); }
+.chip--neu { color: var(--neu); background: var(--neu-bg); border-color: var(--neu-bd); }
+.chip--tag { color: var(--tag); background: var(--tag-bg); border-color: var(--tag-bd); }
+
+.chip--run::before { animation: blink 1.3s steps(1, end) infinite; }
+@keyframes blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.25; } }
+
+.panel { background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); }
+.panel-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 0 14px; border-bottom: 1px solid var(--bd); }
+
+.seg { display: inline-flex; padding: 2px; background: var(--sf2); border: 1px solid var(--bd); border-radius: var(--r); }
+.seg-b { display: inline-flex; align-items: center; gap: 6px; height: 25px; padding: 0 10px; color: var(--tx3); background: transparent; border: 0; border-radius: 3px; cursor: pointer; font-family: inherit; font-size: 12.5px; transition: background 120ms, color 120ms; }
+.seg-b:hover { color: var(--tx2); }
+.seg-b.is-active { color: var(--tx); background: var(--sf); box-shadow: 0 1px 2px rgba(16,22,32,.07); font-weight: 550; }
+.seg-n { color: var(--tx4); font-family: var(--font-mono); font-size: 11px; }
+.seg-b.is-active .seg-n { color: var(--tx3); }
+
+/* ============================================================
+   指标（环）
+   ============================================================ */
+.ring { position: relative; display: grid; place-items: center; flex-shrink: 0; }
+.ring svg { transform: rotate(-90deg); }
+.ring-track { fill: none; stroke: var(--sf3); }
+.ring-val { fill: none; stroke-linecap: round; transition: stroke-dashoffset 400ms ease; }
+.ring-in { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.ring-n { font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.ring-n i { font-size: 0.55em; font-style: normal; font-weight: 500; }
+.ring-u { margin-top: 2px; color: var(--tx4); font-size: 9px; letter-spacing: 0.06em; }
+
+.m-ok   .ring-val { stroke: var(--ok-fill); }
+.m-warn .ring-val { stroke: var(--run-fill); }
+.m-crit .ring-val { stroke: var(--bad-fill); }
+.m-ok   .ring-n { color: var(--ok); }
+.m-warn .ring-n { color: var(--run); }
+.m-crit .ring-n { color: var(--bad); }
+.m-off  .ring-val { stroke: var(--neu-fill); }
+.m-off  .ring-n { color: var(--tx3); }
+
+/* ============================================================
+   控制台
+   ============================================================ */
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+
+.tile { display: flex; align-items: center; gap: 12px; padding: 13px 15px; background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); }
+.tile-i { display: grid; width: 32px; height: 32px; place-items: center; flex-shrink: 0; border-radius: var(--r); }
+.tile-v { font-family: var(--font-mono); font-size: 22px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tile-v i { color: var(--tx3); font-size: 12px; font-style: normal; font-weight: 400; }
+.tile-k { margin-top: 1px; }
+
+.sv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(346px, 1fr)); gap: 10px; margin-top: 10px; }
+
+.sv { display: flex; flex-direction: column; background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); transition: border-color 120ms; }
+.sv:hover { border-color: var(--bd2); }
+.sv.is-off { background: #fbfcfd; }
+
+.sv-h { display: flex; align-items: flex-start; gap: 9px; padding: 12px 13px 0; }
+.sv-n { min-width: 0; flex: 1; }
+.sv-name { overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sv-addr { margin-top: 2px; color: var(--tx3); font-family: var(--font-mono); font-size: 11px; }
+
+.sv-m { display: flex; align-items: center; justify-content: space-around; gap: 8px; padding: 14px 13px 15px; }
+
+.sv-f { display: flex; align-items: center; gap: 7px; padding: 9px 13px; border-top: 1px solid var(--bd); }
+.sv-meta { display: flex; min-width: 0; flex-direction: column; gap: 1px; margin-right: auto; overflow: hidden; }
+.sv-meta span { overflow: hidden; color: var(--tx3); font-family: var(--font-mono); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 故障卡 */
+.fault { display: flex; align-items: flex-start; gap: 12px; margin-top: 10px; padding: 13px 14px; background: var(--sf); border: 1px solid var(--bad-bd); border-left: 3px solid var(--bad); border-radius: var(--r-lg); }
+.fault-i { flex-shrink: 0; margin-top: 1px; color: var(--bad); }
+.fault-n { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.fault-e { margin-top: 7px; padding: 7px 10px; color: #8c2b20; background: var(--bad-bg); border: 1px solid var(--bad-bd); border-radius: 3px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; word-break: break-all; }
+.fault-m { margin-top: 7px; color: var(--tx3); font-family: var(--font-mono); font-size: 11px; }
+.fault-a { display: flex; flex-shrink: 0; gap: 7px; margin-left: auto; padding-left: 12px; }
+
+/* 活动表 */
+.act { margin-top: 10px; overflow: hidden; background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); }
+.act-h, .act-r { display: grid; grid-template-columns: 58px minmax(130px, 1fr) 92px 80px 88px 84px 72px; align-items: center; gap: 12px; padding: 0 13px; }
+.act-h { min-height: 31px; background: var(--sf2); border-bottom: 1px solid var(--bd); }
+.act-r { min-height: 40px; color: inherit; border-bottom: 1px solid var(--bd); cursor: pointer; text-decoration: none; transition: background 120ms; }
+.act-r:last-child { border-bottom: 0; }
+.act-r:hover { background: var(--sf2); }
+.act-id { color: var(--tx4); font-family: var(--font-mono); font-size: 11px; }
+.act-p { overflow: hidden; font-size: 12.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.act-m { overflow: hidden; color: var(--tx2); font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.act-t { color: var(--tx3); font-family: var(--font-mono); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.sec-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 26px 0 0; }
+
+/* ============================================================
+   ★ 发布轨道
+   ============================================================ */
+.rail { display: flex; align-items: flex-start; padding: 16px 14px 14px; overflow-x: auto; }
+.rail-st { display: flex; align-items: flex-start; flex: 1 1 0; min-width: 92px; }
+.rail-node { display: flex; align-items: center; flex: 1; flex-direction: column; gap: 7px; min-width: 0; text-align: center; }
+
+.rail-dot { display: grid; width: 22px; height: 22px; place-items: center; flex-shrink: 0; color: var(--tx4); background: var(--sf); border: 1px solid var(--bd2); border-radius: 50%; }
+.rail-dot svg { width: 12px; height: 12px; }
+.rail-name { color: var(--tx4); font-size: 11.5px; font-weight: 500; line-height: 1.3; }
+.rail-time { color: var(--tx4); font-family: var(--font-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.rail-seg { width: 100%; height: 1px; margin-top: 11px; flex-shrink: 0; background: var(--bd2); }
+
+.rail-st.is-idle .rail-dot { border-style: dashed; }
+.rail-st.is-done .rail-dot { color: #fff; background: var(--ok-fill); border-color: var(--ok-fill); }
+.rail-st.is-done .rail-name { color: var(--tx2); }
+.rail-st.is-done .rail-time { color: var(--tx3); }
+.rail-st.is-now .rail-dot { color: var(--run); background: var(--run-bg); border-color: var(--run-fill); box-shadow: 0 0 0 3px rgba(226, 154, 31, 0.16); }
+.rail-st.is-now .rail-dot svg { animation: rot 1s linear infinite; }
+.rail-st.is-now .rail-name { color: var(--run); font-weight: 600; }
+.rail-st.is-now .rail-time { color: var(--run); }
+@keyframes rot { to { transform: rotate(360deg); } }
+.rail-st.is-bad .rail-dot { color: #fff; background: var(--bad-fill); border-color: var(--bad-fill); box-shadow: 0 0 0 3px rgba(224, 82, 67, 0.16); }
+.rail-st.is-bad .rail-name { color: var(--bad); font-weight: 600; }
+.rail-st.is-bad .rail-time { color: var(--bad); }
+
+.seg-broken { width: 100%; height: 1px; margin-top: 11px; flex-shrink: 0; background: repeating-linear-gradient(90deg, var(--bad-fill) 0 4px, transparent 4px 9px); }
+
+.rail-error { margin: 10px 14px 14px; padding: 11px 13px; background: var(--bad-bg); border: 1px solid var(--bad-bd); border-left: 3px solid var(--bad-fill); border-radius: var(--r); }
+.rail-error-h { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.rail-error-h .cap { color: var(--bad); }
+.rail-error pre { color: #8c2b20; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-all; }
+.rail-error-act { display: flex; gap: 7px; margin-top: 10px; }
+
+.rail-live { display: flex; align-items: center; gap: 10px; margin: 0 14px 14px; padding: 9px 12px; background: var(--run-bg); border: 1px solid var(--run-bd); border-radius: var(--r); }
+.rail-live-t { color: var(--run); font-size: 12px; }
+.rail-live-t b { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* 紧凑轨道 */
+.mini-rail { display: flex; align-items: center; gap: 22px; margin-top: 10px; padding: 12px 15px; background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); }
+.mr { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.mr-l { flex-shrink: 0; color: var(--tx3); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; }
+.mr-st { display: flex; align-items: center; gap: 3px; }
+.mr-d { display: grid; width: 7px; height: 7px; place-items: center; flex-shrink: 0; background: var(--sf3); border: 1px solid var(--bd2); border-radius: 50%; }
+.mr-c { width: 13px; height: 1px; flex-shrink: 0; background: var(--bd2); }
+.mr-st.is-done .mr-d { background: var(--ok-fill); border-color: var(--ok-fill); }
+.mr-st.is-done .mr-c { background: var(--ok-bd); }
+.mr-st.is-now .mr-d { background: var(--run-fill); border-color: var(--run-fill); animation: blink 1.3s steps(1, end) infinite; }
+.mr-st.is-bad .mr-d { background: var(--bad-fill); border-color: var(--bad-fill); box-shadow: 0 0 0 2px rgba(224, 82, 67, 0.2); }
+.mr-c.is-broken { background: repeating-linear-gradient(90deg, var(--bad-fill) 0 3px, transparent 3px 6px); }
+
+@media (max-width: 900px) { .mini-rail { flex-direction: column; align-items: flex-start; gap: 11px; } }
+
+/* ============================================================
+   日志终端（保持深色 —— 日志区深色更好读）
+   ============================================================ */
+.term { overflow: hidden; background: #0d1117; border: 1px solid var(--bd); border-radius: var(--r); }
+.term-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 33px; padding: 0 8px 0 11px; background: #161b22; border-bottom: 1px solid #21262d; }
+.term-h .cap { color: #6e7681; }
+.term-act { display: flex; align-items: center; gap: 3px; }
+.term-b { height: 21px; padding: 0 7px; color: #8b949e; background: transparent; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-family: var(--font-mono); font-size: 10.5px; transition: color 120ms, border-color 120ms, background 120ms; }
+.term-b:hover { color: #e6edf3; border-color: #30363d; }
+.term-b.is-on { color: #e3b341; background: #2d2616; border-color: #574a24; }
+.term-body { max-height: 400px; overflow: auto; padding: 8px 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.62; }
+.term-body::-webkit-scrollbar-thumb { background: #30363d; background-clip: content-box; }
+.term-l { display: grid; grid-template-columns: 42px minmax(0, 1fr); }
+.term-n { padding-right: 11px; color: #404853; font-size: 10.5px; text-align: right; user-select: none; font-variant-numeric: tabular-nums; }
+.term-t { padding-right: 13px; color: #c9d1d9; white-space: pre-wrap; word-break: break-all; }
+.term-l.is-cmd { background: #11161d; }
+.term-l.is-cmd .term-t { color: #79c0ff; }
+.term-l.is-out .term-t { color: #8b949e; }
+.term-l.is-err { background: #221312; }
+.term-l.is-err .term-t { color: #ff9492; }
+.term-l.is-ok .term-t { color: #56d364; }
+.term-l.is-mark .term-t { color: #e3b341; }
+.term-body.is-errs .term-l:not(.is-err):not(.is-mark) { display: none; }
+
+/* ============================================================
+   部署记录 主从
+   ============================================================ */
+.split { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: start; }
+.dcol { align-self: stretch; min-width: 0; }
+.filters { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+
+.srch { display: flex; align-items: center; gap: 7px; width: 236px; height: 29px; margin-left: auto; padding: 0 9px; color: var(--tx3); background: var(--sf); border: 1px solid var(--bd2); border-radius: var(--r); transition: border-color 120ms, box-shadow 120ms; }
+.srch:focus-within { border-color: var(--tag); box-shadow: 0 0 0 3px rgba(22, 104, 179, 0.12); }
+.srch input { flex: 1; min-width: 0; color: var(--tx); background: transparent; border: 0; outline: 0; font-family: inherit; font-size: 12.5px; }
+.srch input::placeholder { color: var(--tx4); }
+
+.dlist { overflow: hidden; background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); }
+.ditem { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 3px 9px; width: 100%; padding: 9px 11px; color: inherit; background: transparent; border: 0; border-bottom: 1px solid var(--bd); border-left: 2px solid transparent; cursor: pointer; font-family: inherit; text-align: left; transition: background 120ms; }
+.ditem:last-child { border-bottom: 0; }
+.ditem:hover { background: var(--sf2); }
+.ditem.is-active { background: var(--tag-bg); border-left-color: var(--tag); }
+.ditem-id { color: var(--tx4); font-family: var(--font-mono); font-size: 11px; }
+.ditem-p { overflow: hidden; font-size: 12.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.ditem-s { grid-column: 2 / 4; overflow: hidden; color: var(--tx3); font-family: var(--font-mono); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+.detail { position: sticky; top: 0; }
+.detail-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 13px 15px; border-bottom: 1px solid var(--bd); }
+.detail-n { margin-top: 4px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+.dmeta { display: flex; flex-wrap: wrap; padding: 11px 15px; border-bottom: 1px solid var(--bd); }
+.dmeta > div { padding-right: 20px; }
+.dmeta > div + div { padding-left: 20px; border-left: 1px solid var(--bd); }
+.dmeta dt { color: var(--tx4); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.dmeta dd { margin-top: 3px; font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.dsec { border-bottom: 1px solid var(--bd); }
+.dsec:last-child { border-bottom: 0; }
+.dsec-t { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 15px 0; }
+.dsec-t + .rail { padding-top: 6px; }
+.note { margin: 12px 15px; padding: 9px 11px; color: var(--tx3); background: var(--sf2); border: 1px solid var(--bd); border-radius: var(--r); font-size: 12px; }
+
+/* ============================================================
+   服务器 / 项目 卡片
+   ============================================================ */
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(322px, 1fr)); gap: 11px; margin-top: 12px; }
+.pcard { display: flex; flex-direction: column; background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r-lg); transition: border-color 120ms; }
+.pcard:hover { border-color: var(--bd2); }
+.pcard-h { display: flex; align-items: center; gap: 9px; padding: 12px 13px 0; }
+.pcard-n { min-width: 0; flex: 1; overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.pcard-kind { padding: 7px 13px 0; }
+.pcard-b { display: flex; flex-direction: column; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--bd); }
+.pf dt { color: var(--tx4); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.pf dd { margin-top: 2px; overflow: hidden; font-family: var(--font-mono); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.pf dd.is-nil { color: var(--tx4); }
+.pf dd b { color: var(--tag); font-weight: 500; }
+.pcard-f { display: flex; align-items: center; gap: 7px; padding: 9px 13px; }
+.pcard-last { display: flex; align-items: center; gap: 6px; margin-right: auto; overflow: hidden; color: var(--tx3); font-family: var(--font-mono); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+.sw { position: relative; width: 32px; height: 17px; flex-shrink: 0; background: var(--bd2); border: 1px solid var(--bd3); border-radius: 999px; cursor: pointer; transition: background 160ms, border-color 160ms; }
+.sw::after { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; content: ""; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(16,22,32,.2); transition: transform 160ms; }
+.sw.is-on { background: var(--ok-fill); border-color: var(--ok-fill); }
+.sw.is-on::after { transform: translateX(15px); }
+
+/* ============================================================
+   设置 / 抽屉
+   ============================================================ */
+.sgrid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; margin-top: 12px; align-items: start; }
+.fld { padding: 0 15px 13px; }
+.fld-l { display: block; margin-bottom: 6px; color: var(--tx2); font-size: 12px; font-weight: 500; }
+.inp { display: flex; align-items: center; gap: 8px; height: 31px; padding: 0 10px; color: var(--tx); background: var(--sf); border: 1px solid var(--bd2); border-radius: var(--r); font-family: inherit; font-size: 12.5px; }
+.inp.is-mono { font-family: var(--font-mono); font-size: 11.5px; }
+.inp.is-ph { color: var(--tx4); }
+
+/* 认证方式标记 */
+.auth { display: inline-flex; align-items: center; gap: 4px; color: var(--tx3); font-family: var(--font-mono); font-size: 10.5px; }
+.auth-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; }
+.auth-dot.is-key { background: var(--tag); }
+.auth-dot.is-pw { background: var(--run); }
+.auth-ph { color: var(--tx4); letter-spacing: 0.08em; }
+.warn { display: flex; gap: 8px; margin: 0 15px 13px; padding: 9px 11px; color: var(--run); background: var(--run-bg); border: 1px solid var(--run-bd); border-radius: var(--r); font-size: 12px; line-height: 1.5; }
+.warn svg { flex-shrink: 0; margin-top: 2px; }
+.row { display: flex; align-items: center; gap: 7px; }
+
+/* 抽屉 */
+.scrim { position: fixed; inset: 0; z-index: 40; display: none; background: rgba(16, 22, 32, 0.32); }
+.scrim.is-open { display: block; }
+.drawer { position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; display: flex; width: min(560px, 94vw); flex-direction: column; background: var(--sf); border-left: 1px solid var(--bd); box-shadow: -8px 0 28px rgba(16, 22, 32, 0.12); transform: translateX(100%); transition: transform 200ms cubic-bezier(.2,0,.2,1); }
+.drawer.is-open { transform: translateX(0); }
+.drawer-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 0 16px; border-bottom: 1px solid var(--bd); }
+.drawer-b { flex: 1; min-height: 0; overflow-y: auto; padding: 15px 16px; }
+.drawer-f { display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 11px 16px; border-top: 1px solid var(--bd); background: var(--sf2); }
+.fgroup { margin-bottom: 18px; }
+.fgroup:last-child { margin-bottom: 0; }
+.fgroup-t { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; padding-bottom: 7px; border-bottom: 1px solid var(--bd); }
+.f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.hint { margin-top: 5px; color: var(--tx3); font-size: 11.5px; line-height: 1.45; }
+
+/* ============================================================
+   终端（抽屉内）
+   ============================================================ */
+.dtabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--bd); background: var(--sf); }
+.dtab {
+    height: 34px;
+    padding: 0 11px;
+    color: var(--tx3);
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12.5px;
+    transition: color 120ms, border-color 120ms;
+}
+.dtab:hover { color: var(--tx2); }
+.dtab.is-active { color: var(--tx); border-bottom-color: var(--tag); font-weight: 550; }
+
+.tpane { display: none; }
+.tpane.is-shown { display: block; }
+
+.drawer--wide { width: min(880px, 96vw); }
+
+.term-wrap { display: flex; flex-direction: column; margin: 0 16px 16px; }
+
+.term-bar {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 34px;
+    padding: 0 6px 0 11px;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-bottom: 0;
+    border-radius: var(--r) var(--r) 0 0;
+}
+
+.term-bar .cap { color: #6e7681; }
+.term-bar-mid { display: flex; align-items: center; gap: 9px; margin-left: auto; }
+.term-bar-mid .cap { color: #565e68; }
+
+.term-screen {
+    height: min(52vh, 460px);
+    overflow-y: auto;
+    padding: 10px 12px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 0 0 var(--r) var(--r);
+    cursor: text;
+}
+
+.term-screen .term-body { max-height: none; overflow: visible; padding: 0; }
+.term-screen .term-l { grid-template-columns: 26px minmax(0, 1fr); }
+.term-screen .term-n { padding-right: 9px; color: #333b45; }
+
+.tline { color: #c9d1d9; font-family: var(--font-mono); font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-all; }
+.tline.is-cmd { color: #79c0ff; }
+.tline.is-err { color: #ff9492; }
+.tline.is-ok { color: #56d364; }
+.tline.is-dim { color: #6e7681; }
+.tline.is-warn { color: #e3b341; }
+
+.tcursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    margin-left: 1px;
+    background: #c9d1d9;
+    vertical-align: -2px;
+    animation: blink 1.1s steps(1, end) infinite;
+}
+
+/* 终端页脚：提示这是需要 WebSocket 的能力 */
+.tnote { display: flex; align-items: flex-start; gap: 8px; margin: 0 16px 16px; padding: 10px 12px; background: var(--run-bg); border: 1px solid var(--run-bd); border-radius: var(--r); color: var(--run); font-size: 12px; line-height: 1.55; }
+.tnote svg { flex-shrink: 0; margin-top: 2px; }
+
+/* 服务器卡片上的终端按钮 */
+.pcard-f .btn.is-term { color: var(--tag); border-color: var(--tag-bd); background: var(--tag-bg); }
+.pcard-f .btn.is-term:hover { background: #dcecf9; }
+
+/* ============================================================
+   预览说明
+   ============================================================ */
+.pnote { display: flex; align-items: center; gap: 9px; padding: 8px 22px; background: var(--tag-bg); border-bottom: 1px solid var(--tag-bd); color: var(--tag); font-size: 12px; }
+.pnote b { font-weight: 600; }
+.pnote .cap { color: var(--tag); opacity: .75; }
+
+.page { display: none; }
+.page.is-shown { display: block; }
+
+/* ============================================================
+   响应式
+   ============================================================ */
+@media (max-width: 1240px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1180px) { .split { grid-template-columns: 300px minmax(0, 1fr); } .sgrid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1000px) {
+    .split { grid-template-columns: minmax(0, 1fr); }
+    .dcol { align-self: auto; }
+    .detail { position: static; }
+    .act-h, .act-r { grid-template-columns: 52px minmax(110px, 1fr) 86px 88px; }
+    .act-h > :nth-child(3), .act-r > :nth-child(3), .act-h > :nth-child(6), .act-r > :nth-child(6) { display: none; }
+}
+@media (max-width: 820px) {
+    .rail { flex-direction: column; align-items: stretch; gap: 0; }
+    .rail-st { flex-direction: column; min-width: 0; }
+    .rail-node { align-items: flex-start; flex-direction: row; gap: 10px; text-align: left; }
+    .rail-seg, .seg-broken { width: 1px; height: 18px; margin: 2px 0 2px 11px; }
+    .seg-broken { background: repeating-linear-gradient(180deg, var(--bad-fill) 0 4px, transparent 4px 9px); }
+    .rail-txt { display: flex; align-items: baseline; gap: 8px; }
+}
+@media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
+    .aside { flex-direction: row; align-items: center; height: 50px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--bd); }
+    .brand { height: 50px; padding: 0 12px; border-bottom: 0; }
+    .brand-sub, .nav-cap { display: none; }
+    .nav { flex-direction: row; gap: 3px; padding: 0 10px 0 0; }
+    .nav-item { height: 32px; padding: 0 9px; white-space: nowrap; }
+    .nav-item.is-active { box-shadow: inset 0 -2px 0 var(--ok); }
+    .nav-badge { display: none; }
+    .aside-foot { display: none; }
+    .top { padding: 0 12px; }
+    .top .cap { display: none; }
+    .canvas { padding: 14px 12px 40px; }
+    .pnote { padding: 8px 12px; }
+    .tiles { grid-template-columns: 1fr; }
+    .filters { flex-wrap: wrap; }
+    .srch { width: 100%; margin-left: 0; }
+    .fault { flex-wrap: wrap; }
+    .fault-a { width: 100%; margin-left: 0; padding: 9px 0 0; }
+    .f2 { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="shell">
+    <!-- ===================== 侧栏 ===================== -->
+    <aside class="aside">
+        <div class="brand">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 1.6v16.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                <path d="M10 3 2.6 6.6v4L10 7l7.4 3.6v-4z" fill="currentColor" />
+                <path d="M4.2 12.4c1.3 2.9 3.5 4.6 5.8 5.4 2.3-.8 4.5-2.5 5.8-5.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+            <span class="brand-txt"><span class="brand-name">KEEL</span><span class="brand-sub">发布控制台</span></span>
+        </div>
+
+        <nav class="nav">
+            <div class="nav-cap cap">Workspace</div>
+            <a class="nav-item is-active" href="#" data-page="dashboard">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1" y="8" width="3" height="7" rx="0.5" /><rect x="6" y="4" width="3" height="11" rx="0.5" /><rect x="11" y="1" width="3" height="14" rx="0.5" /></svg>
+                控制台
+            </a>
+            <a class="nav-item" href="#" data-page="servers">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.6" y="2.4" width="12.8" height="4.6" rx="1.2" /><rect x="1.6" y="9" width="12.8" height="4.6" rx="1.2" /><path d="M4.2 4.7h.01M4.2 11.3h.01" stroke-linecap="round" stroke-width="1.8" /></svg>
+                服务器
+                <span class="nav-badge">4</span>
+            </a>
+            <a class="nav-item" href="#" data-page="projects">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 1.6 14.4 5v6L8 14.4 1.6 11V5z" /><path d="M1.6 5 8 8.4 14.4 5M8 8.4v6" /></svg>
+                项目管理
+            </a>
+            <a class="nav-item" href="#" data-page="deployments">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.4" /><path d="M8 4.4V8l2.4 1.8" stroke-linecap="round" /></svg>
+                部署记录
+            </a>
+            <a class="nav-item" href="#" data-page="generator">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1.6 4.4h9M1.6 8h12.8M1.6 11.6h6" stroke-linecap="round" /><circle cx="13.2" cy="4.4" r="1.5" fill="currentColor" stroke="none" /></svg>
+                CI 生成器
+            </a>
+            <a class="nav-item" href="#" data-page="settings">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="2.3" /><path d="M8 1.5v1.7M8 12.8v1.7M1.5 8h1.7M12.8 8h1.7M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2" stroke-linecap="round" /></svg>
+                系统设置
+            </a>
+        </nav>
+
+        <div class="aside-foot"><span class="chip chip--ok">已连接</span></div>
+    </aside>
+
+    <!-- ===================== 右列 ===================== -->
+    <div style="display:flex; flex-direction:column; min-width:0; min-height:0;">
+        <header class="top">
+            <div class="top-l">
+                <span class="cap">Keel / Console</span>
+                <span class="top-title">发布控制</span>
+            </div>
+            <div class="top-r">
+                <button class="btn btn--g btn--sm" type="button" id="refreshBtn">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13.6 8a5.6 5.6 0 1 1-1.7-4" stroke-linecap="round" /><path d="M13.8 1.6v3.2h-3.2" stroke-linecap="round" /></svg>
+                    刷新
+                </button>
+                <div class="who"><span class="who-av">A</span><span class="who-n">admin</span></div>
+            </div>
+        </header>
+
+        <main class="main">
+            <div class="pnote">
+                <span class="cap">V3 Preview</span>
+                <span>白色主题 · 控制台改为<b>服务器资源监控</b> · 新增<b>服务器</b>页管理 SSH 连接 · 项目里改为选择服务器</span>
+            </div>
+
+            <!-- ============ 控制台 ============ -->
+            <section class="page is-shown" id="page-dashboard">
+                <div class="canvas">
+                    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px;">
+                        <div>
+                            <span class="cap">Overview</span>
+                            <div class="h1">运行总览</div>
+                        </div>
+                        <span class="dim mono" id="sampledAt">采样于 12:04:31</span>
+                    </div>
+
+                    <div class="tiles" style="margin-top:14px">
+                        <div class="tile">
+                            <span class="tile-i" style="background:var(--tag-bg);color:var(--tag)">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.6" y="2.4" width="12.8" height="4.6" rx="1.2" /><rect x="1.6" y="9" width="12.8" height="4.6" rx="1.2" /></svg>
+                            </span>
+                            <div>
+                                <div class="tile-v">4<i> / 4 在线</i></div>
+                                <div class="tile-k cap">服务器</div>
+                            </div>
+                        </div>
+                        <div class="tile">
+                            <span class="tile-i" style="background:var(--ok-bg);color:var(--ok)">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 1.6 14.4 5v6L8 14.4 1.6 11V5z" /><path d="M1.6 5 8 8.4 14.4 5" /></svg>
+                            </span>
+                            <div>
+                                <div class="tile-v">4<i> / 5 启用</i></div>
+                                <div class="tile-k cap">项目</div>
+                            </div>
+                        </div>
+                        <div class="tile">
+                            <span class="tile-i" style="background:var(--run-bg);color:var(--run)">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.4" /><path d="M8 4.4V8l2.4 1.8" stroke-linecap="round" /></svg>
+                            </span>
+                            <div>
+                                <div class="tile-v">18<i> 次 / 24h</i></div>
+                                <div class="tile-k cap">部署次数</div>
+                            </div>
+                        </div>
+                        <div class="tile">
+                            <span class="tile-i" style="background:var(--bad-bg);color:var(--bad)">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2.2 15 14H1z" stroke-linejoin="round" /><path d="M8 6.4v3.2M8 11.6v.6" stroke-linecap="round" /></svg>
+                            </span>
+                            <div>
+                                <div class="tile-v">1<i> 次失败</i></div>
+                                <div class="tile-k cap">需要关注</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sec-head">
+                        <div>
+                            <span class="cap">Server health</span>
+                            <div class="h2" style="margin-top:5px">服务器资源</div>
+                        </div>
+                        <span class="dim">点击卡片查看详情</span>
+                    </div>
+
+                    <div class="sv-grid" id="svGrid"></div>
+
+                    <div class="sec-head"><span class="cap" style="color:var(--bad)">Needs attention</span></div>
+
+                    <div class="fault">
+                        <svg class="fault-i" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2.2 15 14H1z" stroke-linejoin="round" /><path d="M8 6.4v3.2M8 11.6v.6" stroke-linecap="round" /></svg>
+                        <div style="min-width:0">
+                            <div class="fault-n">api-gateway <span class="chip chip--bad">部署失败</span></div>
+                            <div class="fault-e">unzip: cannot find or open /tmp/auto-deploy/2/0141/app.zip</div>
+                            <div class="fault-m">#0141 · main · 38 分钟前 · 停在「解压到部署目录」· 目标 10.0.0.8</div>
+                        </div>
+                        <div class="fault-a">
+                            <button class="btn btn--sm" type="button">重试部署</button>
+                            <button class="btn btn--sm" type="button">查看轨道</button>
+                        </div>
+                    </div>
+
+                    <div class="sec-head">
+                        <div>
+                            <span class="cap">Recent activity</span>
+                            <div class="h2" style="margin-top:5px">最近发布</div>
+                        </div>
+                        <button class="btn btn--g btn--sm" type="button" data-page="deployments">全部记录 →</button>
+                    </div>
+
+                    <div class="act">
+                        <div class="act-h cap"><span>ID</span><span>项目</span><span>分支</span><span>版本</span><span>状态</span><span>耗时</span><span style="text-align:right">时间</span></div>
+                        <a class="act-r" href="#" data-page="deployments">
+                            <span class="act-id">#0142</span><span class="act-p">lurendie/auto_deployment</span><span class="act-m">main</span>
+                            <span><span class="chip chip--tag">v1.2.3</span></span><span><span class="chip chip--ok">成功</span></span>
+                            <span class="act-m">9.8s</span><span class="act-t">12 分钟前</span>
+                        </a>
+                        <a class="act-r" href="#" data-page="deployments">
+                            <span class="act-id">#0141</span><span class="act-p">api-gateway</span><span class="act-m">main</span>
+                            <span class="act-m">—</span><span><span class="chip chip--bad">失败</span></span>
+                            <span class="act-m">6.4s</span><span class="act-t">38 分钟前</span>
+                        </a>
+                        <a class="act-r" href="#" data-page="deployments">
+                            <span class="act-id">#0140</span><span class="act-p">web-console</span><span class="act-m">release</span>
+                            <span><span class="chip chip--tag">v2.0.0-rc1</span></span><span><span class="chip chip--run">执行中</span></span>
+                            <span class="act-m">—</span><span class="act-t">刚刚</span>
+                        </a>
+                        <a class="act-r" href="#" data-page="deployments">
+                            <span class="act-id">#0139</span><span class="act-p">static-docs</span><span class="act-m">gh-pages</span>
+                            <span class="act-m">—</span><span><span class="chip chip--neu">无更新</span></span>
+                            <span class="act-m">1.1s</span><span class="act-t">2 小时前</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 服务器 ============ -->
+            <section class="page" id="page-servers">
+                <div class="canvas">
+                    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px;">
+                        <div>
+                            <span class="cap">Workspace / Servers</span>
+                            <div class="h1">服务器</div>
+                            <div class="dim" style="margin-top:5px;">SSH 连接集中在这里维护，项目部署时直接选用。</div>
+                        </div>
+                        <div class="row">
+                            <button class="btn btn--sm" type="button" id="pingAll">全部测试连接</button>
+                            <button class="btn btn--p" type="button" data-open-drawer>
+                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke-linecap="round" /></svg>
+                                添加服务器
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pgrid" id="serverGrid"></div>
+
+                    <div class="panel" style="margin-top:12px; padding:14px 16px;">
+                        <div class="row" style="align-items:flex-start; gap:10px;">
+                            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--tag)" stroke-width="1.6" style="flex-shrink:0;margin-top:1px" aria-hidden="true"><circle cx="8" cy="8" r="6.4" /><path d="M8 7.4v4M8 4.9v.01" stroke-linecap="round" stroke-width="1.9" /></svg>
+                            <div class="dim" style="line-height:1.6">
+                                服务器需要先被部署服务信任：<code class="mono">ssh-keyscan -p &lt;port&gt; &lt;host&gt; &gt;&gt; ~/.ssh/known_hosts</code><br />
+                                主机公钥校验失败会直接中止部署，并在部署日志里说明原因。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 项目管理 ============ -->
+            <section class="page" id="page-projects">
+                <div class="canvas">
+                    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px;">
+                        <div>
+                            <span class="cap">Workspace / Projects</span>
+                            <div class="h1">项目管理</div>
+                            <div class="dim" style="margin-top:5px;">项目只关心「构建什么、发到哪台服务器的哪个目录」，连接信息在服务器页维护。</div>
+                        </div>
+                        <button class="btn btn--p" type="button">
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke-linecap="round" /></svg>
+                            新建项目
+                        </button>
+                    </div>
+                    <div class="pgrid" id="pgrid"></div>
+                </div>
+            </section>
+
+            <!-- ============ 部署记录 ============ -->
+            <section class="page" id="page-deployments">
+                <div class="canvas">
+                    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px;">
+                        <div><span class="cap">Workspace / Deployments</span><div class="h1">部署记录</div></div>
+                        <button class="btn btn--sm" type="button">
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13.6 8a5.6 5.6 0 1 1-1.7-4" stroke-linecap="round" /><path d="M13.8 1.6v3.2h-3.2" stroke-linecap="round" /></svg>
+                            刷新
+                        </button>
+                    </div>
+
+                    <div class="filters">
+                        <div class="seg">
+                            <button class="seg-b is-active" type="button">全部 <span class="seg-n">168</span></button>
+                            <button class="seg-b" type="button">失败 <span class="seg-n">8</span></button>
+                            <button class="seg-b" type="button">执行中 <span class="seg-n">1</span></button>
+                            <button class="seg-b" type="button">排队 <span class="seg-n">2</span></button>
+                        </div>
+                        <label class="srch">
+                            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" stroke-linecap="round" /></svg>
+                            <input type="search" placeholder="搜索项目、分支、版本" />
+                        </label>
+                    </div>
+
+                    <div class="split">
+                        <div class="dlist" id="dlist"></div>
+                        <div class="dcol" id="detail"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ 系统设置 ============ -->
+            <section class="page" id="page-settings">
+                <div class="canvas canvas--narrow">
+                    <span class="cap">Workspace / Settings</span>
+                    <div class="h1">系统设置</div>
+                    <div class="seg" style="margin-top:14px">
+                        <button class="seg-b is-active" type="button">Webhook</button>
+                        <button class="seg-b" type="button">账户</button>
+                        <button class="seg-b" type="button">系统信息</button>
+                    </div>
+                    <div class="sgrid">
+                        <div class="panel">
+                            <div class="panel-h"><span class="h2">接收地址</span><span class="cap">只读</span></div>
+                            <div style="padding:13px 15px; display:flex; flex-direction:column; gap:11px;">
+                                <div>
+                                    <span class="cap" style="display:block; margin-bottom:5px;">Push / Release webhook</span>
+                                    <div class="row"><div class="inp is-mono" style="flex:1;">http://127.0.0.1:8000/webhook</div><button class="btn btn--sm" type="button">复制</button></div>
+                                </div>
+                                <div>
+                                    <span class="cap" style="display:block; margin-bottom:5px;">CI 制品回调</span>
+                                    <div class="row"><div class="inp is-mono" style="flex:1;">http://127.0.0.1:8000/api/deploy/callback</div><button class="btn btn--sm" type="button">复制</button></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="panel">
+                            <div class="panel-h"><span class="h2">签名密钥</span><span class="chip chip--bad">未配置</span></div>
+                            <div class="fld" style="padding-top:13px">
+                                <label class="fld-l" for="secret">Webhook Secret</label>
+                                <div class="row"><div class="inp is-mono" id="secret" style="flex:1;">••••••••••••••••••••</div><button class="btn btn--sm" type="button">生成</button></div>
+                            </div>
+                            <div class="warn">
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2.2 15 14H1z" stroke-linejoin="round" /><path d="M8 6.4v3.2M8 11.6v.6" stroke-linecap="round" /></svg>
+                                <span>未配置密钥时，Push / Release webhook 不校验签名，任意来源都可触发部署。CI 回调接口会被直接拒绝。</span>
+                            </div>
+                            <div style="padding:0 15px 13px;"><button class="btn btn--p" type="button">保存密钥</button></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="page" id="page-generator">
+                <div class="canvas">
+                    <span class="cap">Workspace / CI generator</span>
+                    <div class="h1">CI 生成器</div>
+                    <div class="panel" style="margin-top:13px; padding:32px; text-align:center;">
+                        <div class="dim">这一页与登录页尚未做。需要的话我补上。</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+</div>
+
+<!-- ===================== 服务器抽屉 ===================== -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <div class="drawer-h">
+        <div>
+            <span class="cap" id="drawerKicker">Servers / New</span>
+            <div class="h2" id="drawerTitle" style="margin-top:3px;font-size:14px">添加服务器</div>
+        </div>
+        <button class="btn btn--g btn--sm" type="button" data-close-drawer aria-label="关闭">✕</button>
+    </div>
+
+    <!-- 新增模式才有分组标签 -->
+    <div class="dtabs" id="drawerTabs" hidden>
+        <button class="dtab is-active" type="button" data-tab="info">连接信息</button>
+        <button class="dtab" type="button" data-tab="term">终端</button>
+    </div>
+
+    <!-- ============ 连接信息 / 新增表单 ============ -->
+    <div class="tpane is-shown" data-pane="info" style="display:flex;flex-direction:column;flex:1;min-height:0" id="paneInfo">
+    <div class="drawer-b">
+        <div class="fgroup">
+            <div class="fgroup-t"><span class="cap">01 · 标识</span></div>
+            <div class="f2">
+                <div class="fld" style="padding-left:0">
+                    <label class="fld-l" for="s-name">名称</label>
+                    <input class="inp" id="s-name" placeholder="生产 Web 节点" style="width:100%" />
+                </div>
+                <div class="fld" style="padding-right:0">
+                    <label class="fld-l" for="s-group">分组（可选）</label>
+                    <input class="inp" id="s-group" placeholder="production" style="width:100%" />
+                </div>
+            </div>
+        </div>
+
+        <div class="fgroup">
+            <div class="fgroup-t"><span class="cap">02 · 连接</span></div>
+            <div class="f2">
+                <div class="fld" style="padding-left:0">
+                    <label class="fld-l" for="s-host">主机</label>
+                    <input class="inp mono" id="s-host" placeholder="10.0.0.8" style="width:100%" />
+                </div>
+                <div class="fld" style="padding-right:0">
+                    <label class="fld-l" for="s-port">端口</label>
+                    <input class="inp mono" id="s-port" value="22" style="width:100%" />
+                </div>
+            </div>
+            <div class="fld" style="padding-left:0;padding-right:0">
+                <label class="fld-l" for="s-user">登录用户</label>
+                <input class="inp mono" id="s-user" placeholder="deploy" style="width:100%" />
+            </div>
+        </div>
+
+        <div class="fgroup">
+            <div class="fgroup-t"><span class="cap">03 · 认证方式</span></div>
+
+            <div class="fld" style="padding-left:0;padding-right:0">
+                <div class="seg" id="authSeg" style="width:100%;display:flex">
+                    <button class="seg-b is-active" type="button" data-auth="key" style="flex:1;justify-content:center">SSH 密钥</button>
+                    <button class="seg-b" type="button" data-auth="password" style="flex:1;justify-content:center">密码</button>
+                </div>
+            </div>
+
+            <!-- 密钥 -->
+            <div data-auth-panel="key">
+                <div class="fld" style="padding-left:0;padding-right:0">
+                    <label class="fld-l" for="s-key">私钥路径</label>
+                    <input class="inp mono" id="s-key" placeholder="~/.ssh/id_ed25519" style="width:100%" />
+                    <div class="hint">部署服务所在机器上的路径。密钥内容不会上传，只记录路径。</div>
+                </div>
+                <div class="fld" style="padding-left:0;padding-right:0">
+                    <label class="fld-l" for="s-pass">私钥密码（可选）</label>
+                    <input class="inp mono" id="s-pass" type="password" placeholder="留空表示私钥无密码" style="width:100%" />
+                </div>
+            </div>
+
+            <!-- 密码 -->
+            <div data-auth-panel="password" hidden>
+                <div class="fld" style="padding-left:0;padding-right:0">
+                    <label class="fld-l" for="s-pw">登录密码</label>
+                    <div class="row">
+                        <input class="inp mono" id="s-pw" type="password" placeholder="输入服务器登录密码" style="flex:1" />
+                        <button class="btn btn--sm" type="button" id="pwToggle" aria-label="显示密码">显示</button>
+                    </div>
+                    <div class="hint">密码会保存到本地 SQLite。建议为该账号配置 sudo 白名单，或改用密钥登录。</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="background:var(--sf2);padding:12px 13px;">
+            <div class="row" style="gap:9px;align-items:flex-start;">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--run)" stroke-width="1.6" style="flex-shrink:0;margin-top:2px" aria-hidden="true"><path d="M8 2.2 15 14H1z" stroke-linejoin="round" /><path d="M8 6.4v3.2M8 11.6v.6" stroke-linecap="round" /></svg>
+                <div class="dim" style="line-height:1.55">保存前建议先执行一次连接测试。首次连接需要目标主机公钥已在 <code class="mono">known_hosts</code> 中。</div>
+            </div>
+            <div class="row" style="margin-top:10px">
+                <button class="btn btn--sm" type="button" id="testBtn">测试连接</button>
+                <span class="dim mono" id="testOut" style="font-size:11px"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="drawer-f" id="drawerFoot">
+        <button class="btn" type="button" data-close-drawer>取消</button>
+        <button class="btn btn--p" type="button">保存服务器</button>
+    </div>
+    </div>
+
+    <!-- ============ 终端 ============ -->
+    <div class="tpane" data-pane="term" style="flex:1;min-height:0;overflow-y:auto;padding-top:14px">
+        <div class="term-wrap">
+            <div class="term-bar">
+                <span class="cap">Terminal</span>
+                <span class="term-bar-mid">
+                    <span class="cap" id="termTarget">—</span>
+                    <span class="cap" id="termSize">—</span>
+                    <span class="cap" id="termClock">00:00</span>
+                </span>
+            </div>
+            <div class="term-screen" id="termScreen"></div>
+        </div>
+
+        <div class="tnote">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2.2 15 14H1z" stroke-linejoin="round" /><path d="M8 6.4v3.2M8 11.6v.6" stroke-linecap="round" /></svg>
+            <span>终端是真 PTY 会话，不是命令回显：需要后端用 <code class="mono">request_pty</code> + <code class="mono">shell</code> 通过 WebSocket 双向桥接 SSH 通道，并做会话录制。现在的输出是设计样例。</span>
+        </div>
+
+        <div style="display:flex;gap:7px;padding:0 16px 16px">
+            <button class="btn btn--sm" type="button" id="termClear">清屏</button>
+            <button class="btn btn--sm" type="button" id="termReplay">重放连接</button>
+            <button class="btn btn--sm" type="button" id="termDisconnect">断开</button>
+        </div>
+    </div>
+</aside>
+
+<script>
+"use strict";
+
+const I = {
+    check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m3.4 8.4 3 3 6.2-6.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    cross: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" stroke-linecap="round"/></svg>',
+    spin: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 1.8a6.2 6.2 0 1 1-6.2 6.2" stroke-linecap="round"/></svg>',
+    dot: '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="8" r="2.4"/></svg>',
+    play: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M5 3.2 12.4 8 5 12.8z" fill="currentColor" stroke-linejoin="round"/></svg>',
+    edit: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M11.2 2.6 13.4 4.8 6 12.2H3.8V10z" stroke-linejoin="round"/></svg>',
+    dots: '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="3.4" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.6" cy="8" r="1.2"/></svg>'
+};
+
+/* ============================================================
+   服务器 —— SSH 连接的唯一来源，项目引用它
+   ============================================================ */
+const SERVERS = [
+    { id: 1, name: "生产 Web 节点", group: "production", host: "10.0.0.8", port: 22, user: "deploy", auth: "key",
+      os: "Ubuntu 24.04 · 4 vCPU · 8 GiB", projectCount: 2, online: true,
+      cpu: 23, mem: 61, disk: 74, memUsed: "4.9 / 8.0 GiB", diskUsed: "118 / 160 GB", load: "0.42 / 0.31 / 0.28" },
+    { id: 2, name: "生产 API 节点", group: "production", host: "10.0.0.9", port: 22, user: "deploy", auth: "key",
+      os: "Debian 12 · 8 vCPU · 16 GiB", projectCount: 1, online: true,
+      cpu: 67, mem: 78, disk: 41, memUsed: "12.5 / 16.0 GiB", diskUsed: "82 / 200 GB", load: "2.14 / 1.98 / 1.72" },
+    { id: 3, name: "对象存储 / 静态站", group: "production", host: "198.51.100.7", port: 2222, user: "root", auth: "password",
+      os: "Alpine 3.20 · 2 vCPU · 2 GiB", projectCount: 1, online: true,
+      cpu: 8, mem: 34, disk: 91, memUsed: "0.7 / 2.0 GiB", diskUsed: "182 / 200 GB", load: "0.06 / 0.04 / 0.03" },
+    { id: 4, name: "预发布环境", group: "staging", host: "10.0.1.20", port: 22, user: "deploy", auth: "key",
+      os: "Ubuntu 22.04 · 4 vCPU · 8 GiB", projectCount: 1, online: false,
+      cpu: null, mem: null, disk: null, memUsed: null, diskUsed: null, load: null }
+];
+
+/* 认证方式：密钥 / 密码 */
+const AUTH_LABEL = { key: "SSH 密钥", password: "密码" };
+const authNote = (s) => s.auth === "key" ? "~/.ssh/id_ed25519" : "密码登录 · 已保存";
+
+const PROJECTS = [
+    { name: "lurendie/auto_deployment", mode: "ci_ssh", enabled: true, serverId: 1,
+      repo: "lurendie/auto_deployment", branch: "main", path: "/srv/apps/keel",
+      last: { variant: "ok", label: "成功", version: "v1.2.3", time: "12 分钟前" } },
+    { name: "web-console", mode: "ci_ssh", enabled: true, serverId: 1,
+      repo: "lurendie/web-console", branch: "release", path: "/var/www/web-console",
+      last: { variant: "ok", label: "成功", version: "v2.0.0-rc1", time: "3 小时前" } },
+    { name: "api-gateway", mode: "ci_ssh", enabled: true, serverId: 2,
+      repo: "lurendie/api-gateway", branch: "main", path: "/srv/apps/api-gateway",
+      last: { variant: "bad", label: "失败", version: null, time: "38 分钟前" } },
+    { name: "static-docs", mode: "local", enabled: true, serverId: null,
+      repo: "git@github.com:lurendie/static-docs.git", branch: "gh-pages", path: "/var/www/docs",
+      last: { variant: "neu", label: "无更新", version: null, time: "2 小时前" } },
+    { name: "legacy-admin", mode: "local", enabled: false, serverId: null,
+      repo: "/srv/git/legacy-admin", branch: "main", path: "/srv/apps/legacy-admin",
+      last: { variant: "neu", label: "已停用", version: null, time: "6 天前" } }
+];
+
+const DEPLOYMENTS = [
+    { id: 142, project: "lurendie/auto_deployment", mode: "ci_ssh", status: "success", label: "成功", variant: "ok",
+      branch: "main", version: "v1.2.3", duration: "9.8s", message: "release v1.2.3 · app.zip", server: "生产 Web 节点",
+      stages: [
+          { name: "下载制品", dur: "1.2s", note: "app.zip · 94.6 MiB · SHA-256 通过" },
+          { name: "建立 SSH", dur: "0.4s", note: "deploy@10.0.0.8:22 · 公钥通过" },
+          { name: "执行停止命令", dur: "0.3s", note: "pm2 stop keel" },
+          { name: "上传制品", dur: "4.8s", note: "SFTP → /tmp/auto-deploy/1/142" },
+          { name: "解压到部署目录", dur: "2.6s", note: "unzip -o → /srv/apps/keel" },
+          { name: "执行启动命令", dur: "0.5s", note: "pm2 start keel" }
+      ],
+      log: [
+          ["mark", "Start remote deploy: lurendie/auto_deployment -> https://github.com/lurendie/auto_deployment/releases/download/v1.2.3/app.zip"],
+          ["cmd", "$ ssh sh -lc 'mkdir -p /tmp/auto-deploy/1/142'"],
+          ["cmd", "$ ssh sh -lc 'pm2 stop keel'"],
+          ["cmd", "$ ssh sh -lc 'unzip -o /tmp/auto-deploy/1/142/app.zip -d /srv/apps/keel'"],
+          ["out", "Archive:  /tmp/auto-deploy/1/142/app.zip"],
+          ["out", "  inflating: /srv/apps/keel/keel"],
+          ["out", "  inflating: /srv/apps/keel/config/default.toml"],
+          ["cmd", "$ ssh sh -lc 'pm2 start keel'"],
+          ["ok", "Remote deploy completed: lurendie/auto_deployment"]
+      ] },
+    { id: 141, project: "api-gateway", mode: "ci_ssh", status: "failed", label: "失败", variant: "bad",
+      branch: "main", version: null, duration: "6.4s", message: "Deployment failed: api-gateway", server: "生产 API 节点",
+      failedStage: 4, errDetail: "unzip: cannot find or open /tmp/auto-deploy/3/141/app.zip, app.zip.zip or app.zip.ZIP",
+      stages: [
+          { name: "下载制品", dur: "1.0s", note: "app.zip · 31.2 MiB · SHA-256 通过" },
+          { name: "建立 SSH", dur: "0.3s", note: "deploy@10.0.0.9:22 · 公钥通过" },
+          { name: "执行停止命令", dur: "0.3s", note: "systemctl stop api-gateway" },
+          { name: "上传制品", dur: "1.9s", note: "SFTP → /tmp/auto-deploy/3/141" },
+          { name: "解压到部署目录", dur: "2.6s", note: "unzip -o → /srv/apps/api-gateway" },
+          { name: "执行启动命令", dur: null, note: "systemctl start api-gateway" }
+      ],
+      log: [
+          ["mark", "Start remote deploy: api-gateway -> https://github.com/lurendie/api-gateway/releases/download/v0.9.1/app.zip"],
+          ["cmd", "$ ssh sh -lc 'mkdir -p /tmp/auto-deploy/3/141'"],
+          ["cmd", "$ ssh sh -lc 'systemctl stop api-gateway'"],
+          ["cmd", "$ ssh sh -lc 'unzip -o /tmp/auto-deploy/3/141/app.zip -d /srv/apps/api-gateway'"],
+          ["err", "unzip: cannot find or open /tmp/auto-deploy/3/141/app.zip, app.zip.zip or app.zip.ZIP"],
+          ["err", "remote command failed with exit code 9"]
+      ] },
+    { id: 140, project: "web-console", mode: "ci_ssh", status: "running", label: "执行中", variant: "run",
+      branch: "release", version: "v2.0.0-rc1", duration: null, message: "部署进行中", server: "生产 Web 节点", nowStage: 3,
+      stages: [
+          { name: "下载制品", dur: "1.6s", note: "dist.zip · 12.4 MiB · SHA-256 通过" },
+          { name: "建立 SSH", dur: "0.5s", note: "deploy@10.0.0.8:22 · 公钥通过" },
+          { name: "执行停止命令", dur: "0.4s", note: "systemctl stop nginx" },
+          { name: "上传制品", dur: null, note: "SFTP → /tmp/auto-deploy/2/140" },
+          { name: "解压到部署目录", dur: null, note: "unzip -o → /var/www/web-console" },
+          { name: "执行启动命令", dur: null, note: "systemctl start nginx" }
+      ] },
+    { id: 139, project: "static-docs", mode: "local", status: "queued", label: "排队中", variant: "neu",
+      branch: "gh-pages", version: null, duration: null, message: "等待同项目的前一个任务完成", server: "本机", halted: true,
+      stages: [
+          { name: "拉取仓库", dur: null, note: null }, { name: "执行构建", dur: null, note: null },
+          { name: "停止服务", dur: null, note: null }, { name: "拷贝制品", dur: null, note: null },
+          { name: "启动服务", dur: null, note: null }
+      ] },
+    { id: 138, project: "static-docs", mode: "local", status: "nochange", label: "无更新", variant: "neu",
+      branch: "gh-pages", version: null, duration: "1.1s", message: "No update found: static-docs", server: "本机",
+      stages: [
+          { name: "拉取仓库", dur: "1.0s", note: "Local a91f4c2 · Remote a91f4c2" },
+          { name: "执行构建", dur: null, note: "无更新，跳过" }, { name: "停止服务", dur: null, note: "无更新，跳过" },
+          { name: "拷贝制品", dur: null, note: "无更新，跳过" }, { name: "启动服务", dur: null, note: "无更新，跳过" }
+      ] },
+    { id: 137, project: "web-console", mode: "ci_ssh", status: "success", label: "成功", variant: "ok",
+      branch: "release", version: "v2.0.0-rc1", duration: "14.2s", message: "release v2.0.0-rc1 · dist.zip", server: "生产 Web 节点",
+      stages: [
+          { name: "下载制品", dur: "2.1s", note: "dist.zip · 12.4 MiB · SHA-256 通过" },
+          { name: "建立 SSH", dur: "0.6s", note: "deploy@10.0.0.8:22 · 公钥通过" },
+          { name: "执行停止命令", dur: "2.4s", note: "systemctl stop nginx" },
+          { name: "上传制品", dur: "6.2s", note: "SFTP → /tmp/auto-deploy/2/137" },
+          { name: "解压到部署目录", dur: "2.1s", note: "unzip -o → /var/www/web-console" },
+          { name: "执行启动命令", dur: "0.8s", note: "systemctl start nginx" }
+      ] }
+];
+
+const chip = (v, l) => '<span class="chip chip--' + v + '">' + l + "</span>";
+const pad = (n) => "#" + String(n).padStart(4, "0");
+const esc = (s) => String(s).replace(/</g, "&lt;");
+const serverById = (id) => SERVERS.find((s) => s.id === id) || null;
+
+/* 阈值 → 严重度 + 颜色档 */
+function sev(p) { return p >= 90 ? "crit" : p >= 75 ? "warn" : "ok"; }
+const SEV_TEXT = { ok: "正常", warn: "偏高", crit: "紧张" };
+
+/* 环形指标 */
+function ring(pct, size, stroke, unit) {
+    const r = (size - stroke) / 2;
+    const c = 2 * Math.PI * r;
+    const off = c * (1 - pct / 100);
+    const num = size >= 76 ? 20 : 17;
+
+    return '<div class="ring m-' + sev(pct) + '" style="width:' + size + 'px;height:' + size + 'px">' +
+        '<svg width="' + size + '" height="' + size + '" aria-hidden="true">' +
+            '<circle class="ring-track" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" stroke-width="' + stroke + '" />' +
+            '<circle class="ring-val" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" stroke-width="' + stroke + '" ' +
+                'stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + off.toFixed(2) + '" />' +
+        "</svg>" +
+        '<span class="ring-in"><span class="ring-n" style="font-size:' + num + 'px">' + pct + "<i>%</i></span>" +
+        '<span class="ring-u">' + unit + "</span></span></div>";
+}
+
+/* 离线的环形占位，避免"0%"被误读成真的没占用 */
+function ringOff(size, stroke, unit) {
+    const r = (size - stroke) / 2;
+    return '<div class="ring m-off" style="width:' + size + 'px;height:' + size + 'px">' +
+        '<svg width="' + size + '" height="' + size + '" aria-hidden="true">' +
+            '<circle class="ring-track" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" stroke-width="' + stroke + '" stroke-dasharray="3 4" fill="none" />' +
+        "</svg>" +
+        '<span class="ring-in"><span class="ring-n" style="font-size:17px;color:var(--tx4)">—</span>' +
+        '<span class="ring-u">' + unit + "</span></span></div>";
+}
+
+/* ============================================================
+   控制台：服务器卡片
+   ============================================================ */
+function renderServers() {
+    document.getElementById("svGrid").innerHTML = SERVERS.map(function (s) {
+        const st = s.online ? "ok" : "crit";
+        const body = s.online
+            ? ring(s.cpu, 76, 6, "CPU") + ring(s.mem, 76, 6, "内存") + ring(s.disk, 76, 6, "磁盘")
+            : ringOff(76, 6, "CPU") + ringOff(76, 6, "内存") + ringOff(76, 6, "磁盘");
+
+        const meta = s.online
+            ? "内存 " + s.memUsed + " · 磁盘 " + s.diskUsed
+            : "连接失败 · 无法采样";
+
+        return '<article class="sv' + (s.online ? "" : " is-off") + '" data-server="' + s.id + '">' +
+            '<div class="sv-h">' +
+                "<div class=\"sv-n\"><div class=\"sv-name\">" + esc(s.name) + "</div>" +
+                '<div class="sv-addr">' + esc(s.user) + "@" + esc(s.host) + ":" + s.port +
+                    ' <span class="auth"><span class="auth-dot is-' + (s.auth === "key" ? "key" : "pw") + '"></span>' +
+                    AUTH_LABEL[s.auth] + "</span></div></div>" +
+                '<span class="chip chip--' + (s.online ? "ok" : "bad") + '">' + (s.online ? "在线" : "离线") + "</span>" +
+            "</div>" +
+            '<div class="sv-m">' + body + "</div>" +
+            '<div class="sv-f">' +
+                '<span class="sv-meta"><span>' + esc(s.os) + "</span><span>" + esc(meta) + "</span></span>" +
+                '<button class="btn btn--g btn--sm" type="button" data-server="' + s.id + '">详情</button>' +
+            "</div>" +
+        "</article>";
+    }).join("");
+}
+
+/* ============================================================
+   服务器页
+   ============================================================ */
+function renderServerGrid() {
+    const el = document.getElementById("serverGrid");
+    if (!el) return;
+
+    el.innerHTML = SERVERS.map(function (s) {
+        const n = PROJECTS.filter((p) => p.serverId === s.id).length;
+        return '<article class="pcard">' +
+            '<div class="pcard-h"><span class="pcard-n">' + esc(s.name) + "</span>" +
+                '<span class="chip chip--' + (s.online ? "ok" : "bad") + '">' + (s.online ? "连接正常" : "连接失败") + "</span>" +
+                '<button class="btn btn--g btn--sm" type="button" aria-label="更多操作">' + I.dots + "</button>" +
+            "</div>" +
+            '<div class="pcard-kind"><span class="cap">' + esc(s.group || "未分组") + " · " + esc(s.os) + "</span></div>" +
+            '<div class="pcard-b">' +
+                '<dl class="pf"><dt>SSH 地址</dt><dd>' + esc(s.user) + "@" + esc(s.host) + ":" + s.port + "</dd></dl>" +
+                '<dl class="pf"><dt>认证方式</dt><dd>' +
+                    '<span class="auth"><span class="auth-dot is-' + (s.auth === "key" ? "key" : "pw") + '"></span>' +
+                    AUTH_LABEL[s.auth] + "</span>" +
+                    (s.auth === "password" ? ' <span class="auth-ph">••••••••</span>' : "") +
+                "</dd></dl>" +
+                '<dl class="pf"><dt>' + (s.auth === "key" ? "私钥路径" : "凭据") + "</dt><dd>" + esc(authNote(s)) + "</dd></dl>" +
+                '<dl class="pf"><dt>被引用的项目</dt><dd>' + (n ? "<b>" + n + " 个</b>" : '<span class="is-nil">未被引用</span>') + "</dd></dl>" +
+            "</div>" +
+            '<div class="pcard-f">' +
+                '<span class="pcard-last">' + (s.online && s.load ? "load " + esc(s.load) : "上次采样失败") + "</span>" +
+                '<button class="btn btn--sm is-term" type="button" data-term="' + s.id + '">' +
+                    '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2.4 4.4 5.6 8l-3.2 3.6M7.6 11.6h5.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+                    "终端</button>" +
+                '<button class="btn btn--sm" type="button" data-test="' + s.id + '">测试连接</button>' +
+                '<button class="btn btn--sm" type="button">编辑</button>' +
+            "</div>" +
+        "</article>";
+    }).join("");
+}
+
+/* ============================================================
+   项目页 —— 服务器下拉，不再散落 SSH 字段
+   ============================================================ */
+function renderProjects() {
+    document.getElementById("pgrid").innerHTML = PROJECTS.map(function (p) {
+        const srv = p.serverId ? serverById(p.serverId) : null;
+        const where = p.mode === "local"
+            ? { main: "本机部署", sub: "无需 SSH" }
+            : srv
+                ? { main: srv.name, sub: srv.user + "@" + srv.host + ":" + srv.port }
+                : { main: "未选择服务器", sub: "需要先添加服务器" };
+
+        return '<article class="pcard">' +
+            '<div class="pcard-h"><span class="pcard-n">' + esc(p.name) + "</span>" +
+                chip(p.last.variant, p.last.label) +
+                '<button class="btn btn--g btn--sm" type="button" aria-label="更多操作">' + I.dots + "</button>" +
+            "</div>" +
+            '<div class="pcard-kind"><span class="cap">' + (p.mode === "ci_ssh" ? "CI 制品 → SSH" : "本机构建 → 本机") + "</span></div>" +
+            '<div class="pcard-b">' +
+                '<dl class="pf"><dt>制品来源</dt><dd>' + esc(p.repo) + "</dd></dl>" +
+                '<dl class="pf"><dt>分支</dt><dd>' + esc(p.branch) + "</dd></dl>" +
+                '<dl class="pf"><dt>目标服务器</dt><dd class="' + (p.mode === "local" ? "is-nil" : "") + '">' +
+                    (p.mode === "local" ? "—" : (srv ? "<b>" + esc(where.main) + "</b>" : '<span class="is-nil">未选择</span>')) +
+                "</dd></dl>" +
+                '<dl class="pf"><dt>部署目录</dt><dd>' + esc(p.path) + "</dd></dl>" +
+            "</div>" +
+            '<div class="pcard-f">' +
+                '<span class="pcard-last">' + (p.last.version ? esc(p.last.version) + " · " : "") + esc(p.last.time) + "</span>" +
+                '<button class="sw' + (p.enabled ? " is-on" : "") + '" type="button" role="switch" aria-checked="' + p.enabled + '" aria-label="启用自动部署"></button>' +
+                '<button class="btn btn--sm" type="button">' + I.play + " 部署</button>" +
+                '<button class="btn btn--sm" type="button">' + I.edit + " 编辑</button>" +
+            "</div>" +
+        "</article>";
+    }).join("");
+}
+
+/* ============================================================
+   发布轨道
+   ============================================================ */
+function renderRail(d) {
+    const failed = d.status === "failed";
+    const running = d.status === "running";
+
+    if (d.halted) {
+        return '<div class="rail">' + d.stages.map((s, i) =>
+            '<div class="rail-st is-idle"><div class="rail-node"><span class="rail-dot">' + I.dot + "</span>" +
+            '<span class="rail-txt"><span class="rail-name">' + s.name + "</span>" +
+            '<span class="rail-time">未启动</span></span></div>' +
+            (i < d.stages.length - 1 ? '<span class="rail-seg"></span>' : "") + "</div>").join("") + "</div>";
+    }
+
+    let html = '<div class="rail">';
+    d.stages.forEach(function (s, i) {
+        let cls = "is-idle", glyph = I.dot, time = "待执行";
+
+        if (failed && d.failedStage != null) {
+            if (i < d.failedStage) { cls = "is-done"; glyph = I.check; time = s.dur || "—"; }
+            else if (i === d.failedStage) { cls = "is-bad"; glyph = I.cross; time = s.dur || "失败"; }
+        } else if (running && d.nowStage != null) {
+            if (i < d.nowStage) { cls = "is-done"; glyph = I.check; time = s.dur || "—"; }
+            else if (i === d.nowStage) { cls = "is-now"; glyph = I.spin; time = "执行中"; }
+        } else if (s.dur) { cls = "is-done"; glyph = I.check; time = s.dur; }
+
+        html += '<div class="rail-st ' + cls + '"><div class="rail-node"><span class="rail-dot">' + glyph + "</span>" +
+            '<span class="rail-txt"><span class="rail-name">' + s.name + "</span>" +
+            '<span class="rail-time">' + time + "</span></span></div>";
+
+        if (i < d.stages.length - 1) {
+            const broken = failed && d.failedStage != null && i + 1 === d.failedStage;
+            html += broken ? '<span class="seg-broken" title="流程在此中断"></span>' : '<span class="rail-seg"></span>';
+        }
+        html += "</div>";
+    });
+    html += "</div>";
+
+    if (failed && d.errDetail) {
+        html += '<div class="rail-error"><div class="rail-error-h">' +
+            '<span class="cap">停在 · ' + d.stages[d.failedStage].name + "</span>" +
+            '<span class="chip chip--bad">exit ≠ 0</span></div>' +
+            "<pre>" + esc(d.errDetail) + "</pre>" +
+            '<div class="rail-error-act">' +
+                '<button class="btn btn--sm" type="button">重试部署</button>' +
+                '<button class="btn btn--sm" type="button">复制错误</button>' +
+                '<button class="btn btn--g btn--sm" type="button">查看这次提交</button>' +
+            "</div></div>";
+    }
+
+    if (running) {
+        html += '<div class="rail-live"><span class="chip chip--run">进行中</span>' +
+            '<span class="rail-live-t">已耗时 <b data-elapsed>00:00</b></span>' +
+            '<span class="dim" style="margin-left:auto">完整日志在任务结束后落库</span></div>';
+    }
+
+    return html;
+}
+
+function renderTerm(d) {
+    if (!d.log) return "";
+    const lines = d.log.map((l, i) =>
+        '<div class="term-l is-' + l[0] + '"><span class="term-n">' + (i + 1) + "</span>" +
+        '<span class="term-t">' + esc(l[1]) + "</span></div>").join("");
+
+    return '<div class="term"><div class="term-h"><span class="cap">Execution log</span>' +
+        '<div class="term-act">' +
+            '<button class="term-b" type="button" data-log-toggle>仅看错误</button>' +
+            '<button class="term-b" type="button">复制</button>' +
+            '<button class="term-b" type="button">下载</button>' +
+        "</div></div>" +
+        '<div class="term-body" data-log-body>' + lines + "</div></div>";
+}
+
+function renderDetail(id) {
+    const d = DEPLOYMENTS.find((x) => x.id === id) || DEPLOYMENTS[0];
+    const running = d.status === "running";
+
+    document.getElementById("detail").innerHTML =
+    '<div class="panel detail">' +
+        '<div class="detail-h"><div><span class="cap">Deployment ' + pad(d.id) + "</span>" +
+            '<div class="detail-n">' + esc(d.project) + "</div></div>" + chip(d.variant, d.label) + "</div>" +
+        '<dl class="dmeta">' +
+            "<div><dt>分支</dt><dd>" + esc(d.branch) + "</dd></div>" +
+            "<div><dt>版本</dt><dd>" + esc(d.version || "—") + "</dd></div>" +
+            "<div><dt>目标</dt><dd>" + esc(d.server) + "</dd></div>" +
+            '<div><dt>耗时</dt><dd' + (running ? " data-elapsed" : "") + ">" + (running ? "00:00" : esc(d.duration || "—")) + "</dd></div>" +
+        "</dl>" +
+        '<div class="dsec"><div class="dsec-t"><span class="cap">Pipeline</span>' +
+            '<span class="cap">' + (d.mode === "ci_ssh" ? "CI 制品 → SSH" : "本机构建") + "</span></div>" +
+            renderRail(d) + "</div>" +
+        '<div class="dsec">' + (d.log
+            ? '<div class="dsec-t"><span class="cap">Log</span><span class="cap">' + d.log.length + " 行</span></div>" + renderTerm(d)
+            : '<div class="note">本次任务没有落库日志。' +
+              (running ? "运行中的执行输出只在任务结束后写入数据库，上面那条轨道反映的是真实进度。" : "") + "</div>") +
+        "</div>" +
+    "</div>";
+}
+
+function renderList() {
+    document.getElementById("dlist").innerHTML = DEPLOYMENTS.map((d) =>
+        '<button class="ditem ' + (d.id === 142 ? "is-active" : "") + '" type="button" data-id="' + d.id + '">' +
+            '<span class="ditem-id">' + pad(d.id) + "</span>" +
+            '<span class="ditem-p">' + esc(d.project) + "</span>" +
+            chip(d.variant, d.label) +
+            '<span class="ditem-s">' + esc(d.branch) + (d.version ? " · " + esc(d.version) : "") +
+            (d.duration ? " · " + esc(d.duration) : "") + "</span>" +
+        "</button>").join("");
+}
+
+/* ============================================================
+   交互
+   ============================================================ */
+function showPage(name) {
+    document.querySelectorAll(".page").forEach((el) => el.classList.toggle("is-shown", el.id === "page-" + name));
+    document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("is-active", el.dataset.page === name));
+    document.querySelector(".main").scrollTop = 0;
+}
+
+document.addEventListener("click", function (e) {
+    const nav = e.target.closest("[data-page]");
+    if (nav) { e.preventDefault(); showPage(nav.dataset.page); return; }
+
+    if (e.target.closest("[data-open-drawer]")) { openNewServer(); return; }
+    if (e.target.closest("[data-close-drawer]") || e.target.id === "scrim") { closeDrawer(); return; }
+
+    const tabBtn = e.target.closest(".dtab");
+    if (tabBtn) { setTab(tabBtn.dataset.tab); return; }
+
+    const termBtn = e.target.closest("[data-term]");
+    if (termBtn) { openTerminal(Number(termBtn.dataset.term)); return; }
+
+    if (e.target.closest("#termClear")) { tclear(); return; }
+    if (e.target.closest("#termReplay")) { if (termServer) tconnect(termServer); return; }
+    if (e.target.closest("#termDisconnect")) { tdisconnect(); return; }
+
+    const item = e.target.closest(".ditem");
+    if (item) {
+        document.querySelectorAll(".ditem").forEach((el) => el.classList.remove("is-active"));
+        item.classList.add("is-active");
+        renderDetail(Number(item.dataset.id));
+        return;
+    }
+
+    const tgl = e.target.closest("[data-log-toggle]");
+    if (tgl) {
+        const body = tgl.closest(".term").querySelector("[data-log-body]");
+        body.classList.toggle("is-errs");
+        const on = body.classList.contains("is-errs");
+        tgl.classList.toggle("is-on", on);
+        tgl.textContent = on ? "显示全部" : "仅看错误";
+        return;
+    }
+
+    const test = e.target.closest("[data-test]");
+    if (test) {
+        const s = serverById(Number(test.dataset.test));
+        test.textContent = "测试中…";
+        setTimeout(function () {
+            test.textContent = s && s.online ? "连接正常" : "连接失败";
+        }, 700);
+        return;
+    }
+
+    const sw = e.target.closest(".sw");
+    if (sw) {
+        sw.classList.toggle("is-on");
+        sw.setAttribute("aria-checked", sw.classList.contains("is-on") ? "true" : "false");
+        return;
+    }
+
+    const seg = e.target.closest(".seg-b");
+    if (seg) {
+        seg.parentElement.querySelectorAll(".seg-b").forEach((el) => el.classList.remove("is-active"));
+        seg.classList.add("is-active");
+    }
+});
+
+document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeDrawer();
+});
+
+/* 认证方式切换：密钥 ↔ 密码，只显示相关字段 */
+const authSeg = document.getElementById("authSeg");
+if (authSeg) {
+    authSeg.addEventListener("click", function (e) {
+        const b = e.target.closest("[data-auth]");
+        if (!b) return;
+        authSeg.querySelectorAll(".seg-b").forEach((el) => el.classList.remove("is-active"));
+        b.classList.add("is-active");
+        const mode = b.dataset.auth;
+        document.querySelectorAll("[data-auth-panel]").forEach(function (p) {
+            p.hidden = p.dataset.authPanel !== mode;
+        });
+    });
+}
+
+/* 密码显示 / 隐藏 */
+const pwToggle = document.getElementById("pwToggle");
+if (pwToggle) {
+    pwToggle.addEventListener("click", function () {
+        const f = document.getElementById("s-pw");
+        const show = f.type === "password";
+        f.type = show ? "text" : "password";
+        pwToggle.textContent = show ? "隐藏" : "显示";
+    });
+}
+
+/* ============================================================
+   终端 —— 真 PTY over SSH 的设计样例
+   ============================================================ */
+let termServer = null;
+let termTimer = null;
+let termStart = 0;
+
+function tline(cls, text) {
+    const s = document.getElementById("termScreen");
+    const d = document.createElement("div");
+    d.className = "tline" + (cls ? " is-" + cls : "");
+    d.textContent = text;
+    s.appendChild(d);
+}
+
+function tprompt(s) {
+    const host = s.host.replace(/\./g, "-");
+    return "deploy@" + host + ":~$ ";
+}
+
+function tclear() {
+    document.getElementById("termScreen").innerHTML = "";
+}
+
+/* 真实 SSH 登录后会看到的握手过程 */
+function tconnect(s) {
+    tclear();
+    termServer = s;
+    document.getElementById("termTarget").textContent = s.user + "@" + s.host + ":" + s.port;
+    document.getElementById("termSize").textContent = "80 × 24";
+    document.getElementById("termClock").textContent = "00:00";
+    termStart = Date.now();
+
+    const steps = [
+        [null,   150, "dim",  "connecting to " + s.host + " port " + s.port + " ..."],
+        [null,   320, "dim",  "host key: ssh-ed25519 SHA256:9xK2mQ… verified against known_hosts"],
+        [null,   260, "dim",  "auth: " + (s.auth === "key" ? "publickey ~/.ssh/id_ed25519" : "password") + " ... ok"],
+        [null,   240, "ok",   "PTY allocated (xterm-256color, 80x24)"],
+        [null,   200, null,   ""],
+        [null,   120, "dim",  "Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-45-generic x86_64)"],
+        [null,   160, "dim",  "  System load: 0.42   Memory usage: 61%   Disk usage: 74%"],
+        [null,   200, null,   ""],
+        ["run",  600, "cmd",  tprompt(s) + "uptime"],
+        ["run",  180, null,   " 12:04:36 up 18 days,  4:22,  2 users,  load average: 0.42, 0.31, 0.28"],
+        ["run",  600, "cmd",  tprompt(s) + "df -h /"],
+        ["run",  180, null,   "Filesystem      Size  Used Avail Use% Mounted on"],
+        ["run",  120, null,   "/dev/vda1       160G  118G   34G  74% /"],
+        ["run",  600, "cmd",  tprompt(s) + "systemctl is-active keel"],
+        ["run",  180, "ok",   "active"]
+    ];
+
+    let delay = 0;
+    steps.forEach(function (st) {
+        delay += st[1];
+        setTimeout(function () { tline(st[2], st[3]); }, delay);
+    });
+
+    // 光标
+    setTimeout(function () {
+        const s2 = document.getElementById("termScreen");
+        const d = document.createElement("div");
+        d.className = "tline";
+        d.innerHTML = '<span class="is-cmd" style="color:#79c0ff">' + tprompt(s) + '</span><span class="tcursor"></span>';
+        s2.appendChild(d);
+        s2.scrollTop = s2.scrollHeight;
+    }, delay + 160);
+
+    clearInterval(termTimer);
+    termTimer = setInterval(function () {
+        const sec = Math.floor((Date.now() - termStart) / 1000);
+        document.getElementById("termClock").textContent =
+            String(Math.floor(sec / 60)).padStart(2, "0") + ":" + String(sec % 60).padStart(2, "0");
+    }, 1000);
+}
+
+function tdisconnect() {
+    clearInterval(termTimer);
+    tline(null, "");
+    tline("warn", "Connection to " + (termServer ? termServer.host : "") + " closed.");
+}
+
+/* 打开抽屉并切到某个标签 */
+function openDrawer(tab) {
+    document.getElementById("scrim").classList.add("is-open");
+    document.getElementById("drawer").classList.add("is-open");
+    setTab(tab || "info");
+}
+
+function setTab(tab) {
+    const tabs = document.getElementById("drawerTabs");
+    tabs.querySelectorAll(".dtab").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === tab));
+    document.querySelectorAll("[data-pane]").forEach((p) => {
+        const on = p.dataset.pane === tab;
+        p.classList.toggle("is-shown", on);
+        p.style.display = on ? "flex" : "none";
+    });
+}
+
+/* 打开某台服务器的终端 */
+function openTerminal(id) {
+    const s = serverById(id);
+    if (!s) return;
+    document.getElementById("drawer").classList.add("drawer--wide");
+    document.getElementById("drawerKicker").textContent = "Servers / " + s.name;
+    document.getElementById("drawerTitle").textContent = "终端";
+    document.getElementById("drawerTabs").hidden = false;
+    document.getElementById("drawerFoot").style.display = "none";
+    document.getElementById("paneInfo").querySelector(".drawer-b").style.display = "none";
+    openDrawer("term");
+    tconnect(s);
+}
+
+/* 打开新增表单 */
+function openNewServer() {
+    const d = document.getElementById("drawer");
+    d.classList.remove("drawer--wide");
+    document.getElementById("drawerKicker").textContent = "Servers / New";
+    document.getElementById("drawerTitle").textContent = "添加服务器";
+    document.getElementById("drawerTabs").hidden = true;
+    document.getElementById("drawerFoot").style.display = "flex";
+    document.getElementById("paneInfo").querySelector(".drawer-b").style.display = "block";
+    document.getElementById("termScreen").innerHTML = "";
+    clearInterval(termTimer);
+    openDrawer("info");
+}
+
+function closeDrawer() {
+    document.getElementById("scrim").classList.remove("is-open");
+    document.getElementById("drawer").classList.remove("is-open");
+    clearInterval(termTimer);
+    document.getElementById("termScreen").innerHTML = "";
+}
+
+/* 抽屉里的测试连接 */
+const testBtn = document.getElementById("testBtn");
+if (testBtn) {
+    testBtn.addEventListener("click", function () {
+        const out = document.getElementById("testOut");
+        out.textContent = "正在连接…";
+        setTimeout(function () { out.textContent = "✓ 公钥校验通过，登录成功"; }, 800);
+    });
+}
+
+/* 顶部刷新：重绘 + 更新采样时间，模拟一次真实轮询 */
+document.getElementById("refreshBtn").addEventListener("click", function () {
+    const now = new Date();
+    document.getElementById("sampledAt").textContent = "采样于 " +
+        String(now.getHours()).padStart(2, "0") + ":" +
+        String(now.getMinutes()).padStart(2, "0") + ":" +
+        String(now.getSeconds()).padStart(2, "0");
+    SERVERS.forEach(function (s) {
+        if (!s.online) return;
+        s.cpu = Math.max(3, Math.min(97, s.cpu + Math.round((Math.random() - 0.5) * 14)));
+        s.mem = Math.max(5, Math.min(97, s.mem + Math.round((Math.random() - 0.5) * 6)));
+    });
+    renderServers();
+});
+
+let t0 = Date.now();
+setInterval(function () {
+    const any = document.querySelector("[data-elapsed]");
+    if (!any) { t0 = Date.now(); return; }
+    const s = Math.floor((Date.now() - t0) / 1000);
+    const v = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+    document.querySelectorAll("[data-elapsed]").forEach((n) => { n.textContent = v; });
+}, 1000);
+
+renderServers();
+renderServerGrid();
+renderProjects();
+renderList();
+renderDetail(142);
+</script>
+</body>
+</html>

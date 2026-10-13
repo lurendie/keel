@@ -33,6 +33,8 @@ npm run dev
 - 首次启动优先使用 `ADMIN_PASSWORD` 设置初始密码，密码至少 8 位。
 - 未设置 `ADMIN_PASSWORD` 时，系统会生成随机密码并仅在首次启动日志中输出。
 - 旧数据库如果仍在使用历史默认密码 `admin` 或 `admin123`，启动时会自动轮换。
+- 登录成功后记录最近登录 IP 和时间，并在顶栏账号信息中展示。
+- 连续 5 次登录失败后，同一来源 IP 会被锁定 5 分钟。
 - `webhook_bind = 0.0.0.0:8000`
 - `webhook_path = /webhook`
 - `webhook_secret = ""`，此时 Push/Release webhook 不校验签名，CI 回调接口禁用
@@ -51,9 +53,10 @@ npm run dev
 
 - `repo_path`：已有的本地仓库路径，或 `https://` / `ssh://` / `git@` 远程 Git 地址
 - `branch`
+- `workdir`：可选，构建命令的工作目录，相对于仓库根目录
 - `build_command`
 - `built_path`
-- `deploy_path`：部署服务本机目标目录
+- `deploy_path`：部署服务本机目标目录，必须是绝对路径，且不能是文件系统根目录
 
 执行流程：
 ```text
@@ -63,17 +66,25 @@ npm run dev
 
 远程 Git 地址会克隆到 `AUTO_DEPLOY_WORKSPACE` 管理的项目目录中。首次部署执行 clone，后续部署拉取更新。私有仓库需要提前为部署服务配置 Git 凭据、SSH Agent 或可用的 credential helper。
 
+本机部署采用先写暂存再原子替换：新版本先完整拷贝到同级的 `.<目标名>.staging-<pid>`，再用 rename 切换到目标路径，因此目标目录不会出现写了一半的中间状态；上一版保留为 `.<目标名>.previous`，可用于手工回滚。
+
 ### CI 制品 + SSH
 适用于 GitHub / Gitea Actions 等 CI 产出制品，再由本系统上传到远程服务器的场景：
 
 - `repo_path`：GitHub/Gitea 的 `owner/repository`
-- `artifact_url`：默认制品下载地址，可填写 `/releases/latest/download/xxx`，也可留空等待动态回调
-- `artifact_sha256`：可选，建议填写
 - `ssh_host`、`ssh_port`、`ssh_user`
 - `ssh_private_key_path`
 - `ssh_private_key_passphrase`：可选
-- `deploy_path`
+- `deploy_path`：远程服务器上的绝对路径，必须以 `/` 开头
 - `stop_command`、`start_command`：可选
+
+SSH 连接会校验目标主机公钥。首次使用前需要把目标主机公钥写入 `known_hosts`：
+
+```bash
+ssh-keyscan -p <ssh_port> <ssh_host> >> ~/.ssh/known_hosts
+```
+
+校验失败（公钥缺失或不匹配）会直接中止部署并在部署日志中说明原因。默认读取 `~/.ssh/known_hosts`，也可以用 `SSH_KNOWN_HOSTS` 指定其他文件。
 
 执行流程：
 ```text
@@ -86,6 +97,8 @@ webhook / CI callback -> resolve artifact URL -> verify sha256 -> SSH upload
 - `.tar.gz` / `.tgz`
 - 其他文件会直接复制到部署目录
 
+制品下载限制：连接超时 15 秒，单次请求最长 5 分钟，制品体积上限 1 GiB。
+
 ## 环境变量
 - `AUTO_DEPLOY_DB`：SQLite 文件路径，默认 `auto_deploy.db`。
 - `ADMIN_PASSWORD`：首次初始化或轮换旧默认密码时使用的管理员密码。
@@ -96,25 +109,37 @@ webhook / CI callback -> resolve artifact URL -> verify sha256 -> SSH upload
 - `LOG_DIR`：日志目录，默认 `logs`。
 - `RUST_LOG`：控制台过滤规则，默认 `keel=info,tower_http=info`。
 - `LOG_FORMAT`：控制台格式，`pretty` 或 `json`，默认 `pretty`。
+- `SSH_KNOWN_HOSTS`：SSH 主机公钥文件路径，默认 `~/.ssh/known_hosts`。
+- `TRUST_PROXY`：决定哪些对端可以下发 `CF-Connecting-IP`、`X-Real-IP`、`X-Forwarded-For`。
+  - 不设置、`false`、`0`：只使用 TCP 对端地址，默认且最安全。
+  - `true`：信任任意对端的转发头，仅在该端口无法被外部直接访问时使用。
+  - `10.0.0.1,172.16.0.0/12`：只信任列表中的 IP 或 IPv4 网段。
+
+启用 `TRUST_PROXY` 后请确认反向代理会覆盖写入上述请求头，否则客户端可以伪造登录 IP。
 
 ## 系统日志
 
-服务使用 `tracing` 作为日志框架，并将每个级别写入独立文件：
+服务使用 `tracing` 作为日志框架，并将每个级别写入独立文件。日志目录下只保留当天日志，历史日志压缩后按 `月日` 归档：
 
 ```text
-logs/keel.trace.log
-logs/keel.debug.log
-logs/keel.info.log
-logs/keel.warn.log
-logs/keel.error.log
+logs/
+├── keel.trace.log
+├── keel.debug.log
+├── keel.info.log
+├── keel.warn.log
+├── keel.error.log
+└── 0912/
+    ├── keel.info.20260912.log.gz
+    └── keel.error.20260912.log.gz
 ```
 
 日志策略：
 
-- 单个文件超过 100MB 时自动分割。
-- 日期发生变化后，在下一条日志写入前轮转前一天文件。
-- 历史文件使用 gzip 压缩。
-- 文件按时间后缀保留 7 天，过期文件自动删除。
+- 单个文件超过 100MB 时滚动，当日文件继续写入 `logs/keel.<级别>.log`。
+- 日期变化后，在下一条日志写入前把前一天的文件压缩归档到 `logs/<月日>/`。
+- 进程停机跨天后重启时，会把遗留的旧日志先归档，保证根目录只有当天文件。
+- 同一天多次滚动时按 `keel.<级别>.<日期>.<序号>.log.gz` 命名。
+- 归档目录保留 7 天，过期目录整体删除。
 - 控制台日志仍可通过 `RUST_LOG` 控制级别。
 
 当前文件采用“级别及更高级别”的包含策略，例如 `info.log` 同时包含 `INFO`、`WARN` 和 `ERROR`；`error.log` 只包含错误。
@@ -125,6 +150,12 @@ logs/keel.error.log
 部署任务默认最多同时执行 4 个，不同项目可以并行构建、下载制品和连接 SSH；同一项目的任务会自动排队，避免重复发布互相覆盖。`DEPLOY_MAX_CONCURRENCY` 应根据 CPU、内存、网络和构建工具的实际负载调整。
 
 SQLite 仍然不是这个规模下的瓶颈。只要部署频率是分钟级或更低，使用 SQLite 足够；即使扩展到数百个项目也通常可行。只有在同时运行多个服务进程、每秒持续写入大量部署记录，或需要跨机器共享任务队列时，才需要考虑 PostgreSQL/MySQL 和独立任务队列。
+
+## 进程生命周期
+
+- 收到 `SIGINT` / `SIGTERM` 后停止接收新请求，并最多等待 120 秒让正在执行的部署跑完。
+- 启动时会把上次退出时仍处于 `queued` / `running` 的部署标记为失败，并追加“服务重启导致部署中断”，避免记录永远停在运行中。
+- 当前设计面向单实例，同一份 SQLite 不要被多个进程同时启动。
 
 ## Webhook
 
@@ -148,9 +179,8 @@ Gitea：
 
 Release asset 选择规则：
 
-1. 如果项目配置了默认 `artifact_url`，使用 URL 的文件名匹配同名 asset。
-2. 如果没有默认 URL 且 Release 只有一个 asset，则自动使用该 asset。
-3. 如果有多个 asset 且无法匹配文件名，该 Release 不会触发部署。
+1. 如果 Release 只有一个 asset，则自动使用该 asset。
+2. 如果有多个 asset，该 Release 不会触发部署；请使用 CI 制品回调传入精确地址。
 
 ### GitHub Actions 制品回调
 
@@ -188,6 +218,7 @@ curl -X POST "$DEPLOY_BASE_URL/api/deploy/callback" \
 ```
 
 ## API 概览
+- `GET /health`（无需鉴权，数据库异常时返回 503）
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 - `POST /api/auth/change-password`
@@ -208,3 +239,5 @@ curl -X POST "$DEPLOY_BASE_URL/api/deploy/callback" \
 - 生产环境必须配置强 `JWT_SECRET`。
 - SSH 建议使用专用 deploy 用户和最小权限。
 - 私钥路径只应在受信任服务器上配置，不要提交到仓库。
+- `webhook_secret` 为空时 Push/Release webhook 不校验签名，启动时会输出告警，请务必配置。
+- 修改密码后，此前签发的 JWT 会立即失效。

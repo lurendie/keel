@@ -234,8 +234,8 @@ onMounted(loadSettings);
 
 .settings-card {
     padding: 24px;
-    background: #ffffff;
-    border: 1px solid #d9ded9;
+    background: var(--sf);
+    border: 1px solid var(--bd);
 }
 
 .settings-card-wide {
@@ -253,8 +253,8 @@ onMounted(loadSettings);
     width: 38px;
     height: 38px;
     place-items: center;
-    color: #404040;
-    background: #f0f0f0;
+    color: var(--tx2);
+    background: var(--sf2);
 }
 
 .card-icon :deep(svg) {
@@ -262,7 +262,7 @@ onMounted(loadSettings);
 }
 
 .card-kicker {
-    color: #879189;
+    color: var(--tx3);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.14em;
@@ -271,8 +271,8 @@ onMounted(loadSettings);
 
 .card-heading h2 {
     margin: 5px 0 0;
-    color: #354139;
-    font-family: Georgia, serif;
+    color: var(--tx);
+    font-family: inherit;
     font-size: 21px;
     font-weight: 500;
 }
@@ -280,7 +280,7 @@ onMounted(loadSettings);
 .card-description {
     max-width: 610px;
     margin: 20px 0 22px;
-    color: #78837b;
+    color: var(--tx3);
     font-size: 12px;
     line-height: 1.6;
 }
@@ -293,7 +293,7 @@ onMounted(loadSettings);
     height: auto;
     margin-bottom: 6px;
     padding: 0;
-    color: #66736a;
+    color: var(--tx3);
     font-size: 11px;
     line-height: 1.2;
 }
@@ -305,14 +305,14 @@ onMounted(loadSettings);
 }
 
 .quiet-button {
-    color: #3d4b42;
-    background: #f5f5f5;
-    border: 1px solid #e2e2e2;
+    color: var(--tx2);
+    background: var(--sf2);
+    border: 1px solid var(--bd2);
 }
 
 .quiet-button:hover {
-    color: #202723;
-    background: #ebebeb;
+    color: var(--tx);
+    background: var(--sf3);
 }
 
 .endpoint-note {
@@ -321,11 +321,11 @@ onMounted(loadSettings);
     justify-content: space-between;
     margin-top: 34px;
     padding-top: 14px;
-    border-top: 1px solid #e1e5e1;
+    border-top: 1px solid var(--bd);
 }
 
 .endpoint-label {
-    color: #879189;
+    color: var(--tx3);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.1em;
@@ -342,8 +342,8 @@ onMounted(loadSettings);
 
 code {
     padding: 5px 8px;
-    color: #404040;
-    background: #f0f0f0;
+    color: var(--tx2);
+    background: var(--sf2);
     font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
     font-size: 11px;
 }
@@ -354,9 +354,9 @@ code {
     gap: 12px;
     margin-top: 10px;
     padding: 17px 19px;
-    color: #6e786f;
-    background: #f7efd5;
-    border: 1px solid #e9d99e;
+    color: var(--tx3);
+    background: var(--run-bg);
+    border: 1px solid var(--run-bd);
 }
 
 .callout-mark {
@@ -365,7 +365,7 @@ code {
     width: 21px;
     height: 21px;
     place-items: center;
-    color: #8a6d2f;
+    color: var(--run);
     border: 1px solid #cfae58;
     border-radius: 50%;
     font-size: 12px;
@@ -373,7 +373,7 @@ code {
 }
 
 .security-callout strong {
-    color: #6f5c29;
+    color: var(--run);
     font-size: 12px;
 }
 

@@ -1,74 +1,83 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { Bell, Connection, Refresh } from "@element-plus/icons-vue";
+import { computed, onMounted, ref } from "vue";
+import { Connection, Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { clearToken, me } from "../api/api";
 
+const route = useRoute();
 const router = useRouter();
 const username = ref("admin");
+const lastLoginIp = ref<string | null>(null);
+const lastLoginAt = ref<string | null>(null);
 const isLoading = ref(false);
 
-onMounted(async () => {
-    try {
-        const user = await me();
-        username.value = user.username;
-    } catch {
-        clearToken();
-        await router.replace("/login");
-    }
+const titles: Record<string, string> = {
+  "/dashboard": "运行总览",
+  "/servers": "服务器",
+  "/projects": "项目管理",
+  "/deployments": "部署记录",
+  "/settings": "系统设置",
+  "/ci-generator": "CI 生成器",
+};
+
+const pageTitle = computed(() => titles[route.path] || "Keel");
+const loginSummary = computed(() => {
+  const time = lastLoginAt.value ? new Date(lastLoginAt.value) : null;
+  const formatted = time && !Number.isNaN(time.getTime()) ? time.toLocaleString() : lastLoginAt.value;
+  return [lastLoginIp.value, formatted].filter(Boolean).join(" · ");
 });
 
-const handleCommand = async (command: string) => {
-    if (command === "logout") {
-        clearToken();
-        await router.replace("/login");
-        return;
-    }
+onMounted(async () => {
+  try {
+    const user = await me();
+    username.value = user.username;
+    lastLoginIp.value = user.last_login_ip;
+    lastLoginAt.value = user.last_login_at;
+  } catch {
+    clearToken();
+    await router.replace("/login");
+  }
+});
 
-    if (command === "settings") {
-        await router.push("/settings");
-    }
-};
+async function handleCommand(command: string) {
+  if (command === "logout") {
+    clearToken();
+    await router.replace("/login");
+  } else if (command === "settings") {
+    await router.push("/settings");
+  }
+}
 
-const refreshPage = () => {
-    isLoading.value = true;
-    window.setTimeout(() => window.location.reload(), 220);
-};
+function refreshPage() {
+  isLoading.value = true;
+  window.setTimeout(() => window.location.reload(), 180);
+}
 
-const showConnectionInfo = () => {
-    ElMessage({
-        message: "Webhook ingress is available at /webhook",
-        type: "info",
-    });
-};
+function showConnectionInfo() {
+  ElMessage({ message: "Webhook 接收端点：/webhook", type: "info" });
+}
 </script>
 
 <template>
     <el-header class="layout-header">
-        <div class="header-context">
-            <span class="context-kicker">KEEL / 2026</span>
-            <span class="context-title">Release control</span>
-        </div>
+        <span class="page-title">{{ pageTitle }}</span>
 
         <div class="header-right">
-            <el-button class="header-tool" text aria-label="查看 webhook 状态" @click="showConnectionInfo">
+            <el-button class="header-tool" text aria-label="查看 Webhook 状态" @click="showConnectionInfo">
                 <el-icon><Connection /></el-icon>
-                <span>Ingress</span>
+                <span>Webhook</span>
             </el-button>
-            <el-button
-                class="header-tool"
-                text
-                aria-label="刷新页面"
-                :loading="isLoading"
-                @click="refreshPage"
-            >
+            <el-button class="header-tool icon-button" text aria-label="刷新页面" :loading="isLoading" @click="refreshPage">
                 <el-icon><Refresh /></el-icon>
             </el-button>
             <el-dropdown @command="handleCommand">
                 <span class="user-info">
                     <span class="avatar">{{ username.slice(0, 1).toUpperCase() }}</span>
-                    <span class="username">{{ username }}</span>
+                    <span class="user-summary">
+                        <span class="username">{{ username }}</span>
+                        <span v-if="loginSummary" class="login-origin" :title="loginSummary">{{ loginSummary }}</span>
+                    </span>
                 </span>
                 <template #dropdown>
                     <el-dropdown-menu>
@@ -81,107 +90,64 @@ const showConnectionInfo = () => {
     </el-header>
 </template>
 
-<style lang="css" scoped>
+<style scoped>
 .layout-header {
     display: flex;
+    height: var(--top-h);
+    min-height: var(--top-h);
     align-items: center;
     justify-content: space-between;
-    height: 72px;
-    padding: 0 28px;
-    color: #202723;
-    background: #ffffff;
-    border-bottom: 1px solid #d9ded9;
+    gap: 16px;
+    padding: 0 18px;
+    color: var(--tx);
+    background: var(--sf);
+    border-bottom: 1px solid var(--bd);
 }
 
-.header-context {
-    display: flex;
-    flex-direction: column;
-}
-
-.context-kicker {
-    color: #7c877f;
-    font-family: "Arial Narrow", "Segoe UI", sans-serif;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-}
-
-.context-title {
-    margin-top: 5px;
-    color: #202723;
-    font-family: Georgia, serif;
-    font-size: 21px;
-    line-height: 1;
-}
-
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.header-tool {
-    color: #657169;
-    font-size: 12px;
-}
-
+.page-title { overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.header-right { display: flex; align-items: center; gap: 3px; }
+.header-tool { height: 29px; color: var(--tx2); font-size: 12px; }
 .header-tool:hover,
-.header-tool:focus-visible {
-    color: #202723;
-    background: #f2f2f2;
-}
+.header-tool:focus-visible { color: var(--tx); background: var(--sf2); }
+.icon-button { width: 29px; padding: 0; }
 
 .user-info {
     display: flex;
     align-items: center;
-    gap: 9px;
-    margin-left: 12px;
-    padding-left: 16px;
-    color: #202723;
-    border-left: 1px solid #d9ded9;
+    gap: 8px;
+    margin-left: 7px;
+    padding-left: 10px;
+    color: var(--tx);
+    border-left: 1px solid var(--bd);
     cursor: pointer;
 }
-
 .avatar {
     display: grid;
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     place-items: center;
-    color: #202723;
-    background: #eeeeee;
-    font-size: 12px;
-    font-weight: 800;
+    color: var(--ok);
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-bd);
+    border-radius: var(--r);
+    font-size: 11px;
+    font-weight: 700;
+}
+.user-summary { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.username { font-size: 12px; font-weight: 600; }
+.login-origin {
+    max-width: 260px;
+    overflow: hidden;
+    color: var(--tx4);
+    font-size: 9.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.username {
-    font-size: 12px;
-    font-weight: 650;
-}
-
-@media (max-width: 720px) {
-    .layout-header {
-        height: 64px;
-        padding: 0 16px 0 94px;
-    }
-
-    .context-title {
-        overflow: hidden;
-        font-size: 16px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .header-tool span {
-        display: none;
-    }
-
-    .user-info {
-        margin-left: 4px;
-        padding-left: 8px;
-    }
-
-    .username {
-        display: none;
-    }
+@media (max-width: 760px) {
+    .layout-header { height: 48px; min-height: 48px; padding: 0 12px; }
+    .header-tool span,
+    .user-summary { display: none; }
+    .user-info { margin-left: 2px; padding-left: 7px; }
 }
 </style>

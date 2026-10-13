@@ -6,18 +6,13 @@
 
 <style lang="css" scoped>
 .layout-main {
+    flex: 1;
     width: 100%;
-    height: 100%;
+    height: auto;
     min-width: 0;
+    min-height: 0;
     padding: 0;
     overflow-y: auto;
-    background: #ffffff;
-}
-
-@media (max-width: 720px) {
-    .layout-main {
-        width: calc(100% - 76px);
-        margin-left: 76px;
-    }
+    background: var(--pg);
 }
 </style>
